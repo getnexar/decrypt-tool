@@ -292,6 +292,104 @@ filename,status,error,processed_at,output_path
 
 ---
 
+## Security Requirements
+
+**CRITICAL:** Video files contain sensitive personal data (faces, license plates, locations). The encryption key is also sensitive. All implementations MUST follow these security measures.
+
+### Data Classification
+
+| Data Type | Classification | Handling |
+|-----------|---------------|----------|
+| Encrypted video files | PII (Personal) | Encrypted at rest, secure deletion |
+| Decrypted video files | PII (Personal) | Encrypted at rest, minimal retention, secure deletion |
+| Decryption keys | Secret | Never logged, never persisted, memory-only |
+| Job metadata | Internal | No PII in logs, anonymized where possible |
+
+### Key Handling
+
+1. **Never log keys** - Keys must NEVER appear in logs, error messages, or debug output
+2. **No persistence** - Keys are held in memory only during job execution, never written to disk
+3. **No client exposure** - Keys are submitted via HTTPS POST, never in URLs or query strings
+4. **Memory cleanup** - Zero-out key buffers after use where possible
+5. **Validation only** - Validate key format (32 hex chars) without logging the value
+
+```python
+# WRONG - Never do this
+logger.info(f"Processing with key: {key}")
+logger.error(f"Invalid key: {key}")
+
+# CORRECT
+logger.info("Processing job")
+logger.error("Invalid key format (expected 32 hex characters)")
+```
+
+### Data in Transit
+
+1. **HTTPS only** - All endpoints must use TLS 1.2+
+2. **No key in URL** - Keys submitted via POST body only
+3. **Secure headers** - HSTS, no caching of sensitive responses
+4. **File streaming** - Large files streamed, not buffered entirely in memory
+
+### Data at Rest
+
+1. **Encrypted storage** - Use Cloud Storage with encryption enabled
+2. **Isolated buckets** - Job files in isolated paths, not shared
+3. **Secure deletion** - Files deleted via secure delete (not just unlink)
+4. **No local caching** - Don't cache decrypted files on app server filesystem
+
+### Access Control
+
+1. **Authentication required** - All endpoints require NAP authentication
+2. **Job isolation** - Users can only access their own jobs
+3. **Rate limiting** - Prevent brute-force and abuse
+4. **Input validation** - Validate all inputs to prevent injection
+
+### Audit & Logging
+
+1. **Log access, not content** - Log job IDs, timestamps, success/failure - never file contents or keys
+2. **Anonymize filenames** - If logging filenames, consider hashing or truncating
+3. **Audit trail** - Who accessed what job, when
+4. **No PII in errors** - Error messages must not contain file contents or personal data
+
+```python
+# WRONG
+logger.error(f"Failed to process {filename}: {file_contents[:100]}")
+
+# CORRECT
+logger.error(f"Failed to process file (job_id={job_id}, file_index={i}): {error_type}")
+```
+
+### Session & Job Security
+
+1. **Job expiration** - Jobs auto-expire after 24 hours
+2. **Secure job IDs** - Use UUIDs, not sequential IDs (prevent enumeration)
+3. **One-time downloads** - Consider single-use download tokens for sensitive files
+4. **Session binding** - Jobs tied to authenticated session
+
+### File Validation
+
+1. **Size limits** - Reject files over reasonable size (e.g., 2GB per file, 10GB per job)
+2. **Type validation** - Only accept MP4 files (validate magic bytes, not just extension)
+3. **Filename sanitization** - Sanitize filenames to prevent path traversal
+4. **Content scanning** - Validate decrypted content is actually MP4 before serving
+
+### Security Checklist for Implementation
+
+- [ ] Keys never logged or persisted
+- [ ] All endpoints use HTTPS
+- [ ] Authentication on all endpoints
+- [ ] Job isolation enforced
+- [ ] Secure file deletion implemented
+- [ ] Rate limiting configured
+- [ ] Input validation on all inputs
+- [ ] Error messages don't leak sensitive data
+- [ ] File size limits enforced
+- [ ] Path traversal prevention
+- [ ] Audit logging configured
+- [ ] Job expiration implemented
+
+---
+
 ## Decryption Algorithm
 
 **Cipher:** XOR stream cipher with LCG-based pseudo-random pad

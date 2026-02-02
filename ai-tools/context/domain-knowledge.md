@@ -96,18 +96,44 @@ Required components for this app:
 
 ### Error Handling
 - Continue processing all files even if some fail
-- Report detailed error messages for failed files
+- Report detailed error messages for failed files (without exposing sensitive data)
 - Allow retry of failed files (individually or batch)
 
 ### Performance Targets
 - Progress updates every 2 seconds via polling
 - Support folders with 50+ video files
-- Handle files up to 1GB each
+- Handle files up to 1GB each (2GB max, 10GB per job)
 
-### Security
-- Validate GDrive folder access before processing
-- Validate key format (32 hex characters)
-- Clean up temporary files after processing
+## Security Requirements (CRITICAL)
+
+**Video files contain sensitive personal data (faces, license plates, locations). The encryption key is also sensitive.**
+
+### Key Handling (MANDATORY)
+- **NEVER log keys** - Keys must never appear in logs, errors, or debug output
+- **No persistence** - Keys held in memory only, never written to disk
+- **No URL exposure** - Keys submitted via POST body, never in URLs
+- **Memory cleanup** - Zero-out key buffers after use
+
+### Data Protection
+- **Encrypted storage** - All files in Cloud Storage with encryption
+- **Secure deletion** - Files deleted securely, not just unlinked
+- **Job isolation** - Users can only access their own jobs
+- **Auto-expiration** - Jobs and files expire after 24 hours
+
+### Access Control
+- **Authentication required** - All endpoints require NAP auth
+- **Rate limiting** - Prevent brute-force and abuse
+- **Secure job IDs** - UUIDs, not sequential (prevent enumeration)
+
+### Logging Rules
+- Log: job IDs, timestamps, success/failure counts, error types
+- NEVER log: keys, file contents, full filenames, personal data
+
+### Input Validation
+- Validate key format (32 hex chars) without logging value
+- Validate file types (MP4 magic bytes, not just extension)
+- Enforce size limits
+- Sanitize filenames (prevent path traversal)
 
 ## File Organization
 
