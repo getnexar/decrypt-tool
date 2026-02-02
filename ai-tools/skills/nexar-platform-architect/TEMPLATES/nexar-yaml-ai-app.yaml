@@ -1,0 +1,32 @@
+# AI/ML Nexar Platform App Configuration
+# For apps requiring GPU and AI capabilities
+
+app_id: my-ai-app
+name: AI-Powered Application
+description: LLM and AI processing workloads
+
+tags:
+  - ai
+  - gpu
+  - production
+
+# AI/ML capabilities
+capabilities:
+  - vertex-ai         # Gemini models
+  - cloud-storage     # Document processing
+  - secret-manager    # API keys for external services
+
+# GPU-enabled resources
+resources:
+  memory: 16Gi        # MINIMUM for GPU workloads
+  cpu: 4              # MINIMUM for GPU workloads
+  gpu: nvidia-l4      # L4 GPU for inference
+
+  scaling:
+    min_instances: 0  # GPU instances are expensive
+    max_instances: 3  # Limit GPU usage
+
+# Notes:
+# - Requires Dockerfile with CUDA base image
+# - Example base: nvidia/cuda:12.1-runtime-ubuntu22.04
+# - Cold starts may be longer due to model loading

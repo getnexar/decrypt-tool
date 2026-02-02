@@ -1,0 +1,128 @@
+{
+  "executionMode": {
+    "default": "collaborative",
+    "options": ["agentic", "collaborative", "direct"],
+    "description": "Controls how work is executed after planning. Collaborative keeps user in control while agents assist via @ mentions."
+  },
+  "statusLine": {
+    "tier": 2,
+    "description": "StatusLine verbosity: 1=minimal (mode+folder+branch), 2=standard (mode+role+sessions), 3=full (multi-line)"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(git:*)",
+      "Bash(npm:*)",
+      "Bash(node:*)",
+      "Bash(bd:*)",
+      "Bash(nexar:*)",
+      "Read(*)",
+      "Edit(*)",
+      "Write(*)"
+    ],
+    "deny": [
+      "Read(.env*)",
+      "Read(secrets/**)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo 'export BEADS_PROJECT=$CLAUDE_PROJECT_DIR' >> \"$CLAUDE_ENV_FILE\""
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/session-start.sh"
+          },
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PROJECT_DIR}/ai-tools/hooks/discipline/init-state.js init"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PROJECT_DIR}/ai-tools/hooks/discipline/test-first-gate.js"
+          },
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PROJECT_DIR}/ai-tools/hooks/discipline/validation-loop-pre.js"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PROJECT_DIR}/ai-tools/hooks/discipline/validation-loop-post.js"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PROJECT_DIR}/ai-tools/hooks/discipline/validation-loop-bash.js"
+          }
+        ]
+      }
+    ]
+  },
+  "enabledPlugins": {
+    "superpowers@superpowers-marketplace": true,
+    "nexar@nexar-claude-agents": true
+  },
+  "extraKnownMarketplaces": {
+    "nexar-claude-agents": {
+      "source": {
+        "source": "github",
+        "repo": "getnexar/claude-agents"
+      }
+    },
+    "superpowers-marketplace": {
+      "source": {
+        "source": "github",
+        "repo": "obra/superpowers-marketplace"
+      }
+    }
+  },
+  "env": {
+    "AMPLIFY_VERSION": "6.0.0"
+  },
+  "behavioralCountermeasures": {
+    "enabled": true,
+    "version": "1.0",
+    "rules": {
+      "noApologies": true,
+      "noPostMerge": true,
+      "evidenceBeforeClaims": true,
+      "noSilentSkipping": true,
+      "challengeFirstResponse": true,
+      "explicitAssumptions": true,
+      "thinkBeforeActing": true
+    },
+    "skillTriggers": {
+      "enabled": true,
+      "depthLimit": 3,
+      "maxInvocationsPerResponse": 3,
+      "timeoutMs": 120000
+    },
+    "emergencyDisable": {
+      "disableFile": ".claude/DISABLE_COUNTERMEASURES",
+      "envVar": "AMPLIFY_DISABLE_COUNTERMEASURES",
+      "description": "Create the file, set env var to 'true', or tell Claude to disable for session"
+    }
+  }
+}

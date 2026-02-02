@@ -5,16 +5,25 @@
 
 ## Overview
 
-A NAP web application that decrypts encrypted MP4 files from a Google Drive folder using the Nexar video encryption algorithm.
+A NAP web application that decrypts encrypted MP4 files using the Nexar video encryption algorithm. Supports both Google Drive and local file sources, with flexible output options.
+
+### Supported Workflows
+
+| Source | Destination |
+|--------|-------------|
+| Google Drive folder | Google Drive folder (same or different) |
+| Google Drive folder | Download to computer |
+| Local file upload | Google Drive folder |
+| Local file upload | Download to computer |
 
 ### User Flow
 
-1. User pastes a GDrive folder link containing encrypted videos
+1. User selects source: GDrive folder link OR uploads local files
 2. User enters the 32-character hex decryption key
-3. User chooses destination: same folder (subfolder) or different folder
-4. App decrypts all MP4 files recursively, showing progress
+3. User chooses destination: GDrive folder OR download to computer
+4. App decrypts all MP4 files (recursively for GDrive), showing progress
 5. User sees results summary with execution log
-6. User can retry failed files or download CSV log
+6. User can retry failed files, download CSV log, or download decrypted files
 
 ---
 
@@ -53,11 +62,22 @@ A NAP web application that decrypts encrypted MP4 files from a Google Drive fold
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Source GDrive Folder: [_________________________________]  │
-│  Decryption Key:       [_________________________________]  │
+│  Source:       ○ Google Drive folder                        │
+│                ● Upload from computer                       │
 │                                                             │
-│  Destination:  ○ Same folder (creates /decrypted subfolder) │
-│                ● Different folder                           │
+│  [If GDrive]:  [_________________________________]          │
+│  [If Upload]:  ┌─────────────────────────────────┐          │
+│                │  Drop files here or click to    │          │
+│                │  browse (MP4 files only)        │          │
+│                └─────────────────────────────────┘          │
+│                                                             │
+│  Decryption Key: [_________________________________]        │
+│                                                             │
+│  Destination:  ○ Google Drive folder                        │
+│                ● Download to computer                       │
+│                                                             │
+│  [If GDrive]:  ○ Same folder (creates /decrypted subfolder) │
+│                ○ Different folder                           │
 │                [_________________________________]          │
 │                                                             │
 │                              [Start Decryption]             │
@@ -78,31 +98,42 @@ A NAP web application that decrypts encrypted MP4 files from a Google Drive fold
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  ✓ 20 succeeded   ✗ 3 failed      [Retry Failed] [⬇ CSV]   │
+│  ✓ 20 succeeded   ✗ 3 failed                                │
+│                                                             │
+│  [Retry Failed] [⬇ Download All (ZIP)] [⬇ CSV Log]         │
 ├─────────────────────────────────────────────────────────────┤
 │  Filter: [All ▾]  [Success ▾]  [Failed ▾]                  │
 ├─────────────────────────────────────────────────────────────┤
-│  ✓ 2024-01-15_14-23-45_front.mp4           decrypted       │
-│  ✓ 2024-01-15_14-24-12_front.mp4           decrypted       │
-│  ✗ 2024-01-15_14-25-01_rear.mp4            invalid header  │
-│  ✓ 2024-01-15_14-26-33_front.mp4           decrypted       │
+│  ✓ 2024-01-15_14-23-45_front.mp4    decrypted     [⬇]      │
+│  ✓ 2024-01-15_14-24-12_front.mp4    decrypted     [⬇]      │
+│  ✗ 2024-01-15_14-25-01_rear.mp4     invalid header         │
+│  ✓ 2024-01-15_14-26-33_front.mp4    decrypted     [⬇]      │
 │  ...                                                        │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+**Download options (when destination is "Download to computer"):**
+- **Download All (ZIP):** Downloads all successfully decrypted files as a ZIP archive
+- **Individual download:** Click ⬇ icon next to each successful file
 
 ### UI Components (Nexar Design System)
 
 | Element | Component | Notes |
 |---------|-----------|-------|
+| Source choice | `RadioGroup` | GDrive / Upload |
+| Destination choice | `RadioGroup` | GDrive / Download |
+| GDrive subfolder choice | `RadioGroup` | Same folder / Different folder |
 | Form inputs | `Input` | With `Label` |
-| Destination choice | `RadioGroup` | Same folder / Different folder |
+| File upload | Custom dropzone | Drag & drop + click to browse |
 | Submit button | `Button` (primary) | Purple brand color |
 | Progress bar | `Progress` | With percentage |
 | Results summary | `Badge` | Success (green), Failed (destructive) |
-| File log | `Table` | Sortable, filterable |
+| File log | `Table` | Sortable, filterable, with download icons |
 | Filter dropdown | `Select` | All / Success / Failed |
 | Retry button | `Button` (outline) | |
+| Download All button | `Button` (primary) | ZIP archive |
 | CSV download | `Button` (secondary) | With download icon |
+| Individual download | Icon button | Per-file download |
 
 **Typography:**
 - Headings: `font-heading` (Hellix)
@@ -117,12 +148,24 @@ A NAP web application that decrypts encrypted MP4 files from a Google Drive fold
 ```
 POST /api/jobs
 Body: {
-  source_folder: string,    // GDrive folder link or ID
+  source_type: "gdrive" | "upload",
+  source_folder?: string,   // GDrive folder link (if source_type=gdrive)
   key: string,              // 32-char hex decryption key
-  dest_folder?: string,     // Optional: destination folder link
-  same_folder: boolean      // If true, creates /decrypted subfolder
+  dest_type: "gdrive" | "download",
+  dest_folder?: string,     // GDrive folder link (if dest_type=gdrive)
+  same_folder?: boolean     // If true, creates /decrypted subfolder (gdrive only)
 }
-Response: { job_id: string }
+Response: { job_id: string, upload_url?: string }
+```
+
+**Note:** For `source_type=upload`, client uploads files to the returned `upload_url`.
+
+### Upload Files (for local upload source)
+
+```
+POST /api/jobs/{job_id}/upload
+Body: multipart/form-data with files
+Response: { uploaded: number, filenames: string[] }
 ```
 
 ### Get Job Status
@@ -130,15 +173,17 @@ Response: { job_id: string }
 ```
 GET /api/jobs/{job_id}
 Response: {
-  status: "pending" | "processing" | "completed" | "failed",
+  status: "pending" | "uploading" | "processing" | "completed" | "failed",
   total_files: number,
   processed: number,
   current_file: string,
+  dest_type: "gdrive" | "download",
   results: [{
     filename: string,
     status: "success" | "failed",
     error?: string,
     output_path?: string,
+    download_url?: string,  // Present if dest_type=download
     processed_at: string
   }]
 }
@@ -150,6 +195,20 @@ Response: {
 POST /api/jobs/{job_id}/retry
 Body: { files?: string[] }  // Optional: specific files, or all failed
 Response: { job_id: string }
+```
+
+### Download Single File
+
+```
+GET /api/jobs/{job_id}/download/{filename}
+Response: Binary file (Content-Disposition: attachment)
+```
+
+### Download All as ZIP
+
+```
+GET /api/jobs/{job_id}/download-all
+Response: ZIP archive (Content-Disposition: attachment)
 ```
 
 ### Download CSV Log
@@ -170,23 +229,66 @@ filename,status,error,processed_at,output_path
 
 ## Processing Flow
 
-1. **Parse GDrive folder ID** from link
-2. **List all .mp4 files** recursively in folder
-3. **Create destination folder** if needed (subfolder or separate folder)
-4. **For each file:**
-   - Download to temp storage (Cloud Storage bucket)
-   - Decrypt using XOR cipher (NumPy-optimized)
+### Flow A: GDrive Source → GDrive Destination
+
+1. Parse GDrive folder ID from link
+2. List all .mp4 files recursively in folder
+3. Create destination folder if needed
+4. For each file:
+   - Download to temp storage
+   - Decrypt using XOR cipher
    - Validate MP4 header
-   - Upload to destination GDrive folder (preserve folder structure)
-   - Log result (success/failure + error message)
-   - Clean up temp files
-5. **Return final results**
+   - Upload to destination GDrive folder
+   - Log result
+5. Clean up temp files
+6. Return final results
+
+### Flow B: GDrive Source → Download Destination
+
+1. Parse GDrive folder ID from link
+2. List all .mp4 files recursively
+3. For each file:
+   - Download to temp storage
+   - Decrypt using XOR cipher
+   - Validate MP4 header
+   - Store in job output directory (Cloud Storage)
+   - Log result with download URL
+4. Return results with download links
+5. Clean up after download/expiry (24h)
+
+### Flow C: Local Upload → GDrive Destination
+
+1. Receive uploaded files from client
+2. Store in temp storage
+3. For each file:
+   - Decrypt using XOR cipher
+   - Validate MP4 header
+   - Upload to destination GDrive folder
+   - Log result
+4. Clean up temp files
+5. Return final results
+
+### Flow D: Local Upload → Download Destination
+
+1. Receive uploaded files from client
+2. For each file:
+   - Decrypt using XOR cipher
+   - Validate MP4 header
+   - Store in job output directory
+   - Log result with download URL
+3. Return results with download links
+4. Clean up after download/expiry (24h)
 
 ### Error Handling
 
 - Continue processing all files on individual failures
 - Report summary at end with success/failure counts
 - Allow retry of failed files (individually or all)
+
+### File Cleanup
+
+- Temp files: Deleted immediately after processing
+- Download files: Available for 24 hours, then auto-deleted
 
 ---
 
@@ -313,6 +415,6 @@ google-auth==2.25.0
 ## Future Considerations
 
 - Real-time progress via WebSocket/SSE (instead of polling)
-- Batch download as ZIP
 - Key validation before starting (test decrypt first 12 bytes)
 - Persistent job history
+- Drag & drop folder upload (browser limitations may apply)

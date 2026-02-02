@@ -1,0 +1,19 @@
+# Basic Nexar Platform App Configuration
+# For simple web apps and dashboards
+
+app_id: my-app                    # Required: lowercase, hyphens, numbers only
+name: My Application              # Display name in platform UI
+description: A simple internal app  # Brief description
+
+# Optional: Metadata tags for organization
+tags:
+  - team-platform
+  - department-engineering
+
+# Resources (optional - defaults shown)
+resources:
+  memory: 512Mi                   # 256Mi, 512Mi, 1Gi, 2Gi, 4Gi, 8Gi, 16Gi, 32Gi
+  cpu: 1                          # 1, 2, 4, 8
+
+# No capabilities needed for basic app
+# Authentication handled automatically by IAP

@@ -1,0 +1,33 @@
+# Full-Stack Nexar Platform App Configuration
+# For apps with frontend, backend API, and database
+
+app_id: my-fullstack-app
+name: Full-Stack Application
+description: Complete app with UI, API, and database
+
+tags:
+  - fullstack
+  - production
+
+# Enable required GCP services
+capabilities:
+  - cloud-sql         # PostgreSQL database
+  - cloud-storage     # File uploads and storage
+  - secret-manager    # Secure credentials
+  - vertex-ai         # AI features (optional)
+  - logging           # Structured logging
+
+# Resource configuration
+resources:
+  memory: 2Gi         # More memory for full-stack
+  cpu: 2              # More CPU for concurrent requests
+
+  # Scaling configuration
+  scaling:
+    min_instances: 1  # Keep warm to reduce cold starts
+    max_instances: 10 # Limit based on expected traffic
+
+# Environment variables (non-sensitive)
+# env:
+#   LOG_LEVEL: info
+#   APP_ENV: production

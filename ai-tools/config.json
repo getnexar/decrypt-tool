@@ -1,0 +1,30 @@
+{
+  "version": "6.6.2",
+  "vendors": {
+    "enabled": [
+      "claude",
+      "cursor",
+      "windsurf",
+      "gemini"
+    ],
+    "primary": "claude"
+  },
+  "agents": {
+    "preset": "all",
+    "selected": [
+      "product-manager",
+      "tech-lead",
+      "work-orchestrator",
+      "frontend-engineer",
+      "backend-engineer",
+      "database-engineer",
+      "ai-engineer",
+      "devops-engineer",
+      "firmware-engineer",
+      "qa-backend",
+      "qa-frontend",
+      "qa-firmware"
+    ]
+  },
+  "installedAt": "2026-02-02T18:34:48.862Z"
+}

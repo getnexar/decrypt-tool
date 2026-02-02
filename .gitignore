@@ -39,3 +39,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Beads local cache (beads.jsonl is tracked)
+.beads/beads.db
+.beads/beads.db-*

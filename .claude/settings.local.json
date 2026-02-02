@@ -1,0 +1,130 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(amplify init:*)",
+      "Read",
+      "Edit",
+      "Write",
+      "Skill",
+      "mcp__filesystem__read_file",
+      "mcp__filesystem__read_text_file",
+      "mcp__filesystem__read_multiple_files",
+      "mcp__filesystem__write_file",
+      "mcp__filesystem__edit_file",
+      "mcp__filesystem__create_directory",
+      "Bash(bd:*)",
+      "Bash(npx amplify session:*)",
+      "Bash(git:*)",
+      "Bash(npm:*)",
+      "Bash(npx:*)",
+      "Bash(yarn:*)",
+      "Bash(pnpm:*)",
+      "Bash(pip:*)",
+      "Bash(pip3:*)",
+      "Bash(cargo:*)",
+      "Bash(go:*)",
+      "Bash(node:*)",
+      "Bash(tsx:*)",
+      "Bash(ts-node:*)",
+      "Bash(python:*)",
+      "Bash(python3:*)",
+      "Bash(make:*)",
+      "Bash(cmake:*)",
+      "Bash(tsc:*)",
+      "Bash(vite:*)",
+      "Bash(webpack:*)",
+      "Bash(esbuild:*)",
+      "Bash(rollup:*)",
+      "Bash(jest:*)",
+      "Bash(vitest:*)",
+      "Bash(pytest:*)",
+      "Bash(mocha:*)",
+      "Bash(eslint:*)",
+      "Bash(prettier:*)",
+      "Bash(biome:*)",
+      "Bash(black:*)",
+      "Bash(ruff:*)",
+      "Bash(ls:*)",
+      "Bash(tree:*)",
+      "Bash(find:*)",
+      "Bash(mkdir:*)",
+      "Bash(rm:*)",
+      "Bash(cp:*)",
+      "Bash(mv:*)",
+      "Bash(cat:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(touch:*)",
+      "Bash(ps:*)",
+      "Bash(kill:*)",
+      "Bash(env:*)",
+      "Bash(which:*)",
+      "Bash(echo:*)",
+      "Bash(test:*)",
+      "Bash(curl:*)",
+      "Bash(wget:*)",
+      "Bash(docker:*)",
+      "Bash(docker-compose:*)",
+      "Bash(psql:*)",
+      "Bash(mysql:*)",
+      "Bash(sqlite3:*)",
+      "Bash(gh:*)"
+    ]
+  },
+  "amplify": {
+    "executionMode": {
+      "default": "collaborative",
+      "description": "Controls execution after planning. Collaborative keeps user in control while agents assist via @ mentions."
+    }
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo 'export BEADS_PROJECT=$CLAUDE_PROJECT_DIR' >> \"$CLAUDE_ENV_FILE\""
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/session-start.sh"
+          }
+        ]
+      }
+    ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "npx amplify status",
+    "padding": 0
+  },
+  "extraKnownMarketplaces": {
+    "nexar-claude-agents": {
+      "source": {
+        "source": "github",
+        "repo": "getnexar/claude-agents"
+      }
+    },
+    "superpowers-marketplace": {
+      "source": {
+        "source": "github",
+        "repo": "obra/superpowers-marketplace"
+      }
+    },
+    "claude-code-plugins": {
+      "source": {
+        "source": "github",
+        "repo": "anthropics/claude-code"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "superpowers@superpowers-marketplace": true,
+    "nexar@nexar-claude-agents": true,
+    "pr-review-team@nexar-claude-agents": true,
+    "feature-dev@claude-code-plugins": true,
+    "frontend-design@claude-code-plugins": true,
+    "ralph-wiggum@claude-code-plugins": true
+  }
+}
