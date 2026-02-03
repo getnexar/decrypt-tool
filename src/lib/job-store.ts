@@ -92,7 +92,14 @@ export function addFileResult(jobId: string, result: FileResult): void {
   const job = jobs.get(jobId)
   if (!job) return
 
-  job.results.push(result)
+  // Check if file already exists to prevent duplicates
+  const existing = job.results.find(r => r.filename === result.filename)
+  if (existing) {
+    // Update existing entry instead of adding duplicate
+    Object.assign(existing, result)
+  } else {
+    job.results.push(result)
+  }
   job.updatedAt = new Date().toISOString()
 }
 

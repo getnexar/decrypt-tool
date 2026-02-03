@@ -146,6 +146,7 @@ export async function processGDriveJob(
 
           updateFileResult(jobId, file.name, {
             status: 'success',
+            error: undefined, // Clear any previous error
             outputPath: `gdrive://${newFileId}`,
             size: decryptedBuffer.length,
             processedAt: new Date().toISOString()
@@ -159,6 +160,7 @@ export async function processGDriveJob(
 
           updateFileResult(jobId, file.name, {
             status: 'success',
+            error: undefined, // Clear any previous error
             downloadUrl: `/api/jobs/${jobId}/download/${encodeURIComponent(file.name)}`,
             size: decryptedBuffer.length,
             processedAt: new Date().toISOString()
