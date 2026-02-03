@@ -25,35 +25,20 @@ const decryptedFileStore = new Map<string, Map<string, Buffer>>()
 const CLEANUP_INTERVAL = 60 * 60 * 1000
 
 interface GDriveConfig {
-  accessToken: string
-}
-
-/**
- * Get auth config - in production, this comes from NAP
- * For now, uses environment variable
- */
-async function getAuthConfig(): Promise<GDriveConfig> {
-  // TODO: Get actual OAuth token from NAP google-drive capability
-  // For now, uses environment variable for local development
-  const token = process.env.GDRIVE_ACCESS_TOKEN
-  if (!token) {
-    throw new Error(
-      'Google Drive authentication not configured. ' +
-      'Set GDRIVE_ACCESS_TOKEN environment variable or deploy to NAP.'
-    )
-  }
-  return { accessToken: token }
+  jwt: string
 }
 
 /**
  * Process a GDrive-to-GDrive or GDrive-to-Download job
  * @param jobId - The job ID
  * @param key - 32-char hex decryption key (NOT stored, only used in memory)
+ * @param jwt - X-Nexar-Platform-JWT for workspace-proxy authentication
  * @param specificFiles - Optional: only process these files (for retry)
  */
 export async function processGDriveJob(
   jobId: string,
   key: string,
+  jwt: string,
   specificFiles?: string[]
 ): Promise<void> {
   const job = getJob(jobId)
@@ -62,9 +47,14 @@ export async function processGDriveJob(
   }
 
   try {
+    // Validate JWT first (inside try/catch so failure updates job status)
+    if (!jwt) {
+      throw new Error('Authentication required - missing platform JWT. This app requires the Nexar Platform (NAP) environment.')
+    }
+
     updateJobStatus(jobId, 'processing')
 
-    const config = await getAuthConfig()
+    const config: GDriveConfig = { jwt }
     const pad = generateXorPad(key)
 
     // List files from source
@@ -89,12 +79,18 @@ export async function processGDriveJob(
 
     // Get destination folder ID
     let destFolderId: string | undefined
+    console.log(`[processor] Job ${jobId}: destType=${job.destType}, sameFolder=${job.sameFolder}, sourcePath=${job.sourcePath}`)
     if (job.destType === 'gdrive') {
       if (job.sameFolder && job.sourcePath) {
+        console.log(`[processor] Job ${jobId}: Creating/getting decrypted folder in ${job.sourcePath}`)
         destFolderId = await getOrCreateDecryptedFolder(job.sourcePath, config)
+        console.log(`[processor] Job ${jobId}: Destination folder ID: ${destFolderId}`)
       } else if (job.destPath) {
         destFolderId = job.destPath
+        console.log(`[processor] Job ${jobId}: Using specified destination: ${destFolderId}`)
       }
+    } else {
+      console.log(`[processor] Job ${jobId}: Using download mode (files stored in memory)`)
     }
 
     // Initialize file store for download mode
@@ -136,6 +132,7 @@ export async function processGDriveJob(
         // Handle destination
         if (job.destType === 'gdrive' && destFolderId) {
           // Upload to GDrive
+          console.log(`[processor] Job ${jobId}: Uploading ${safeFilename} to GDrive folder ${destFolderId}`)
           const newFileId = await uploadFile(
             destFolderId,
             safeFilename,
@@ -143,6 +140,7 @@ export async function processGDriveJob(
             'video/mp4',
             config
           )
+          console.log(`[processor] Job ${jobId}: Upload complete - ${safeFilename} -> fileId: ${newFileId}`)
 
           updateFileResult(jobId, file.name, {
             status: 'success',

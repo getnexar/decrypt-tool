@@ -38,8 +38,11 @@ export async function POST(request: NextRequest) {
 
     // Start processing in background for GDrive source
     if (body.sourceType === 'gdrive') {
+      // Get the platform JWT from request headers (set by NAP security sidecar)
+      const jwt = request.headers.get('X-Nexar-Platform-JWT') || ''
+
       // Don't await - let it run in background
-      processGDriveJob(job.id, body.key).catch(error => {
+      processGDriveJob(job.id, body.key, jwt).catch(error => {
         console.error(`Background processing failed for job ${job.id}:`, error instanceof Error ? error.message : 'Unknown error')
       })
     }

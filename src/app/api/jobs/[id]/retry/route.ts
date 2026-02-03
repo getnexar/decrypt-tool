@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getJob, createJob } from '@/lib/job-store'
 import { validateHexKey } from '@/lib/validation'
+import { processGDriveJob } from '@/lib/processor'
 import type { RetryRequest } from '@/types'
 
 export async function POST(
@@ -49,10 +50,13 @@ export async function POST(
     sameFolder: originalJob.sameFolder
   })
 
-  // TODO: Start retry processing
-  // if (originalJob.sourceType === 'gdrive') {
-  //   processGDriveJob(newJob.id, body.key, filesToRetry)
-  // }
+  // Start retry processing
+  if (originalJob.sourceType === 'gdrive') {
+    const jwt = request.headers.get('X-Nexar-Platform-JWT') || ''
+    processGDriveJob(newJob.id, body.key, jwt, filesToRetry).catch(error => {
+      console.error(`Retry processing failed for job ${newJob.id}:`, error instanceof Error ? error.message : 'Unknown error')
+    })
+  }
 
   return NextResponse.json({ jobId: newJob.id })
 }

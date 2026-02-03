@@ -8,20 +8,25 @@
  * - Creating destination folders
  *
  * Authentication is provided by Nexar Application Platform (NAP)
- * via the 'google-drive' capability.
+ * via the 'google-drive' capability and workspace-proxy.
  */
 
+import { Agent } from 'undici'
 import type { GDriveFile } from '@/types'
 
-const DRIVE_API_BASE = 'https://www.googleapis.com/drive/v3'
-const UPLOAD_API_BASE = 'https://www.googleapis.com/upload/drive/v3'
+// NAP workspace-proxy handles OAuth via Domain-Wide Delegation
+const WORKSPACE_PROXY_URL = process.env.WORKSPACE_PROXY_URL || 'https://workspace-proxy.internal'
+
+// Required for internal workspace-proxy certificate
+// Node.js native fetch uses undici, which doesn't respect NODE_TLS_REJECT_UNAUTHORIZED
+const insecureAgent = new Agent({ connect: { rejectUnauthorized: false } })
 
 // ============================================================================
 // Configuration
 // ============================================================================
 
 export interface GDriveConfig {
-  accessToken: string
+  jwt: string  // X-Nexar-Platform-JWT from the request
 }
 
 // ============================================================================
@@ -50,12 +55,15 @@ async function driveRequest<T>(
   config: GDriveConfig,
   options: RequestInit = {}
 ): Promise<T> {
-  const response = await fetch(`${DRIVE_API_BASE}${endpoint}`, {
+  const response = await fetch(`${WORKSPACE_PROXY_URL}/drive${endpoint}`, {
     ...options,
     headers: {
-      'Authorization': `Bearer ${config.accessToken}`,
+      'X-Nexar-Platform-JWT': config.jwt,
+      'Content-Type': 'application/json',
       ...options.headers
-    }
+    },
+    // @ts-expect-error - dispatcher is valid for undici but not in RequestInit types
+    dispatcher: insecureAgent
   })
 
   if (!response.ok) {
@@ -141,11 +149,13 @@ export async function downloadFile(
   config: GDriveConfig
 ): Promise<ReadableStream<Uint8Array>> {
   const response = await fetch(
-    `${DRIVE_API_BASE}/files/${fileId}?alt=media`,
+    `${WORKSPACE_PROXY_URL}/drive/files/${fileId}/content`,
     {
       headers: {
-        'Authorization': `Bearer ${config.accessToken}`
-      }
+        'X-Nexar-Platform-JWT': config.jwt
+      },
+      // @ts-expect-error - dispatcher is valid for undici but not in RequestInit types
+      dispatcher: insecureAgent
     }
   )
 
@@ -174,11 +184,13 @@ export async function downloadFileAsBuffer(
   config: GDriveConfig
 ): Promise<Buffer> {
   const response = await fetch(
-    `${DRIVE_API_BASE}/files/${fileId}?alt=media`,
+    `${WORKSPACE_PROXY_URL}/drive/files/${fileId}/content`,
     {
       headers: {
-        'Authorization': `Bearer ${config.accessToken}`
-      }
+        'X-Nexar-Platform-JWT': config.jwt
+      },
+      // @ts-expect-error - dispatcher is valid for undici but not in RequestInit types
+      dispatcher: insecureAgent
     }
   )
 
@@ -200,6 +212,9 @@ export async function downloadFileAsBuffer(
  * @param config - API configuration with access token
  * @returns Google Drive file ID of uploaded file
  */
+// Maximum size for single-request upload (10MB)
+const MAX_SIMPLE_UPLOAD_SIZE = 10 * 1024 * 1024
+
 export async function uploadFile(
   folderId: string,
   filename: string,
@@ -207,18 +222,11 @@ export async function uploadFile(
   mimeType: string = 'video/mp4',
   config: GDriveConfig
 ): Promise<string> {
-  // Metadata for the file
-  const metadata = {
-    name: filename,
-    parents: [folderId]
-  }
-
   // Convert stream to buffer if needed
   let buffer: Buffer
   if (Buffer.isBuffer(data)) {
     buffer = data
   } else {
-    // data is ReadableStream
     const chunks: Uint8Array[] = []
     const reader = data.getReader()
     while (true) {
@@ -229,32 +237,32 @@ export async function uploadFile(
     buffer = Buffer.concat(chunks)
   }
 
-  // Create multipart body
-  const boundary = '-------314159265358979323846'
-  const delimiter = `\r\n--${boundary}\r\n`
-  const closeDelimiter = `\r\n--${boundary}--`
+  // Use resumable upload for large files
+  if (buffer.length > MAX_SIMPLE_UPLOAD_SIZE) {
+    return uploadFileResumable(folderId, filename, buffer, mimeType, config)
+  }
 
-  const body = Buffer.concat([
-    Buffer.from(
-      delimiter +
-      'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
-      JSON.stringify(metadata) +
-      delimiter +
-      `Content-Type: ${mimeType}\r\n\r\n`
-    ),
-    buffer,
-    Buffer.from(closeDelimiter)
-  ])
+  // Simple upload for small files
+  const metadata = {
+    name: filename,
+    parents: [folderId]
+  }
+
+  const formData = new FormData()
+  formData.append('metadata', JSON.stringify(metadata))
+  const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer
+  formData.append('file', new Blob([arrayBuffer], { type: mimeType }), filename)
 
   const response = await fetch(
-    `${UPLOAD_API_BASE}/files?uploadType=multipart`,
+    `${WORKSPACE_PROXY_URL}/drive/files`,
     {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${config.accessToken}`,
-        'Content-Type': `multipart/related; boundary=${boundary}`
+        'X-Nexar-Platform-JWT': config.jwt
       },
-      body
+      body: formData,
+      // @ts-expect-error - dispatcher is valid for undici but not in RequestInit types
+      dispatcher: insecureAgent
     }
   )
 
@@ -264,6 +272,69 @@ export async function uploadFile(
   }
 
   const result = await response.json() as { id: string }
+  return result.id
+}
+
+/**
+ * Upload a large file using resumable upload
+ */
+async function uploadFileResumable(
+  folderId: string,
+  filename: string,
+  buffer: Buffer,
+  mimeType: string,
+  config: GDriveConfig
+): Promise<string> {
+  const metadata = {
+    name: filename,
+    parents: [folderId]
+  }
+
+  // Step 1: Initiate resumable upload session
+  const initResponse = await fetch(
+    `${WORKSPACE_PROXY_URL}/drive/files/resumable`,
+    {
+      method: 'POST',
+      headers: {
+        'X-Nexar-Platform-JWT': config.jwt,
+        'Content-Type': 'application/json',
+        'X-Upload-Content-Type': mimeType,
+        'X-Upload-Content-Length': buffer.length.toString()
+      },
+      body: JSON.stringify(metadata),
+      // @ts-expect-error - dispatcher is valid for undici but not in RequestInit types
+      dispatcher: insecureAgent
+    }
+  )
+
+  if (!initResponse.ok) {
+    const error = await initResponse.text()
+    throw new Error(`Failed to initiate resumable upload: ${initResponse.status} - ${error}`)
+  }
+
+  const uploadUri = initResponse.headers.get('Location')
+  if (!uploadUri) {
+    throw new Error('No upload URI returned from resumable upload initiation')
+  }
+
+  // Step 2: Upload the file content
+  const uploadResponse = await fetch(uploadUri, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': mimeType,
+      'Content-Length': buffer.length.toString()
+    },
+    body: buffer,
+    // @ts-expect-error - dispatcher is valid for undici but not in RequestInit types
+    dispatcher: insecureAgent
+  })
+
+  if (!uploadResponse.ok) {
+    const error = await uploadResponse.text()
+    throw new Error(`Failed to upload file content: ${uploadResponse.status} - ${error}`)
+  }
+
+  const result = await uploadResponse.json() as { id: string }
   return result.id
 }
 
@@ -280,17 +351,26 @@ export async function createFolder(
   name: string,
   config: GDriveConfig
 ): Promise<string> {
-  const response = await fetch(`${DRIVE_API_BASE}/files`, {
+  // Workspace-proxy POST /drive/files expects multipart/form-data
+  // with 'metadata' field and 'file' field (even for folders)
+  const formData = new FormData()
+  formData.append('metadata', JSON.stringify({
+    name,
+    mimeType: 'application/vnd.google-apps.folder',
+    parents: [parentId]
+  }))
+  // Workspace-proxy requires a file field - use empty blob for folders
+  formData.append('file', new Blob([]), name)
+
+  const response = await fetch(`${WORKSPACE_PROXY_URL}/drive/files`, {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${config.accessToken}`,
-      'Content-Type': 'application/json'
+      'X-Nexar-Platform-JWT': config.jwt
+      // Note: Don't set Content-Type - FormData sets it automatically with boundary
     },
-    body: JSON.stringify({
-      name,
-      mimeType: 'application/vnd.google-apps.folder',
-      parents: [parentId]
-    })
+    body: formData,
+    // @ts-expect-error - dispatcher is valid for undici but not in RequestInit types
+    dispatcher: insecureAgent
   })
 
   if (!response.ok) {
