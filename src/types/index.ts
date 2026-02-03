@@ -118,6 +118,9 @@ export interface Job {
   /** Individual file results */
   results: FileResult[]
 
+  /** Error message if job failed */
+  error?: string
+
   /** ISO timestamp when job was created */
   createdAt: string
 

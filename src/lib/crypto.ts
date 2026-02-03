@@ -14,31 +14,36 @@ const LCG_MODULUS = 2 ** 31;
 const PAD_SIZE = 4096;
 
 /**
- * Generate 4096-byte XOR pad from a 32-character hex key
+ * Generate 4096-byte XOR pad from a 32-character key string
  *
  * Algorithm: LCG-based pseudo-random pad generation
- * 1. Convert hex key to bytes
+ * 1. Treat key string as ASCII bytes (32 bytes)
  * 2. Initialize seed from key using XOR accumulation
  * 3. Generate pad bytes using LCG formula
  *
- * @param hexKey - 32-character hexadecimal string (e.g., "f626ad1ffb5159bef3e9295df34244af")
+ * IMPORTANT: The key is treated as ASCII bytes, NOT hex-decoded.
+ * A 32-character key "aa981a6b..." becomes 32 ASCII bytes, not 16 hex bytes.
+ *
+ * @param key - 32-character key string (e.g., "f626ad1ffb5159bef3e9295df34244af")
  * @returns 4096-byte XOR pad
  */
-export function generateXorPad(hexKey: HexKey): Uint8Array {
-  // Convert hex key to bytes
-  const keyBytes = new Uint8Array(16); // 32 hex chars = 16 bytes
-  for (let i = 0; i < 16; i++) {
-    keyBytes[i] = parseInt(hexKey.substring(i * 2, i * 2 + 2), 16);
+export function generateXorPad(key: HexKey): Uint8Array {
+  // Normalize key to lowercase for consistent behavior
+  const normalizedKey = key.toLowerCase();
+
+  // Treat key as ASCII bytes (each character = 1 byte)
+  // Pad to 32 bytes if shorter, matching Python's ljust(32, b'\x00')
+  const paddedKey = new Uint8Array(32);
+  for (let i = 0; i < Math.min(normalizedKey.length, 32); i++) {
+    paddedKey[i] = normalizedKey.charCodeAt(i);
   }
 
-  // Pad key to 32 bytes (matching Python's ljust(32, b'\x00'))
-  const paddedKey = new Uint8Array(32);
-  paddedKey.set(keyBytes);
-
   // Initialize seed from padded key
+  // Use unsigned 32-bit arithmetic (>>>0 forces unsigned, then mask to 32 bits)
   let seed = 0;
   for (let i = 0; i < paddedKey.length; i++) {
-    seed = (seed * 17) ^ paddedKey[i];
+    // In C, uint32_t wraps at 2^32. We simulate this with >>> 0
+    seed = ((seed * 17) ^ paddedKey[i]) >>> 0;
   }
 
   // Generate 4096-byte pad using LCG

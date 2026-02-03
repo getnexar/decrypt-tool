@@ -34,10 +34,13 @@ interface GDriveConfig {
  */
 async function getAuthConfig(): Promise<GDriveConfig> {
   // TODO: Get actual OAuth token from NAP google-drive capability
-  // For now, throw an error indicating this needs to be implemented
+  // For now, uses environment variable for local development
   const token = process.env.GDRIVE_ACCESS_TOKEN
   if (!token) {
-    throw new Error('Google Drive authentication not configured')
+    throw new Error(
+      'Google Drive authentication not configured. ' +
+      'Set GDRIVE_ACCESS_TOKEN environment variable or deploy to NAP.'
+    )
   }
   return { accessToken: token }
 }
@@ -185,8 +188,9 @@ export async function processGDriveJob(
     }
 
   } catch (error) {
-    console.error(`Job ${jobId} processing error:`, error)
-    updateJobStatus(jobId, 'failed')
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+    console.error(`Job ${jobId} processing error:`, errorMessage)
+    updateJobStatus(jobId, 'failed', errorMessage)
     throw error
   }
 }

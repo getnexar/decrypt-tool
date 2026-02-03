@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createJob } from '@/lib/job-store'
 import { parseGDriveUrl, validateHexKey } from '@/lib/validation'
+import { processGDriveJob } from '@/lib/processor'
 import type { CreateJobRequest } from '@/types'
 
 export async function POST(request: NextRequest) {
@@ -35,9 +36,13 @@ export async function POST(request: NextRequest) {
       sameFolder: body.sameFolder
     })
 
-    // TODO: Start processing in background
-    // For GDrive: processGDriveJob(job.id, body.key)
-    // For upload: Return upload URL
+    // Start processing in background for GDrive source
+    if (body.sourceType === 'gdrive') {
+      // Don't await - let it run in background
+      processGDriveJob(job.id, body.key).catch(error => {
+        console.error(`Background processing failed for job ${job.id}:`, error instanceof Error ? error.message : 'Unknown error')
+      })
+    }
 
     return NextResponse.json({
       jobId: job.id,

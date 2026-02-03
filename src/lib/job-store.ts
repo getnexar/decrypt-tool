@@ -4,7 +4,12 @@ import { v4 as uuidv4 } from 'uuid'
 import type { Job, JobStatus, FileResult, SourceType, DestType } from '@/types'
 
 // In-memory store
-const jobs = new Map<string, Job>()
+// Use globalThis to persist across hot reloads in development
+const globalForJobs = globalThis as unknown as { jobs: Map<string, Job> | undefined }
+const jobs = globalForJobs.jobs ?? new Map<string, Job>()
+if (process.env.NODE_ENV !== 'production') {
+  globalForJobs.jobs = jobs
+}
 
 // Job expiration time (24 hours)
 const JOB_EXPIRATION_MS = 24 * 60 * 60 * 1000
@@ -36,27 +41,36 @@ export function createJob(config: {
   }
 
   jobs.set(job.id, job)
+  console.log(`[job-store] Created job ${job.id}, store has ${jobs.size} jobs`)
   return job
 }
 
 export function getJob(jobId: string): Job | undefined {
+  console.log(`[job-store] Getting job ${jobId}, store has ${jobs.size} jobs, keys: ${[...jobs.keys()].join(', ')}`)
   const job = jobs.get(jobId)
-  if (!job) return undefined
+  if (!job) {
+    console.log(`[job-store] Job ${jobId} not found`)
+    return undefined
+  }
 
   // Check if expired
   if (job.expiresAt && new Date(job.expiresAt) < new Date()) {
     jobs.delete(jobId)
+    console.log(`[job-store] Job ${jobId} expired`)
     return undefined
   }
 
   return job
 }
 
-export function updateJobStatus(jobId: string, status: JobStatus): void {
+export function updateJobStatus(jobId: string, status: JobStatus, error?: string): void {
   const job = jobs.get(jobId)
   if (!job) return
 
   job.status = status
+  if (error !== undefined) {
+    job.error = error
+  }
   job.updatedAt = new Date().toISOString()
 }
 
