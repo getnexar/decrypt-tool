@@ -24,15 +24,19 @@ const decryptedFileStore = new Map<string, Map<string, Buffer>>()
 // Cleanup interval (1 hour)
 const CLEANUP_INTERVAL = 60 * 60 * 1000
 
+// Local dev mode detection
+const isLocalDev = !!process.env.GDRIVE_ACCESS_TOKEN
+
 interface GDriveConfig {
-  jwt: string
+  jwt?: string
+  accessToken?: string
 }
 
 /**
  * Process a GDrive-to-GDrive or GDrive-to-Download job
  * @param jobId - The job ID
  * @param key - 32-char hex decryption key (NOT stored, only used in memory)
- * @param jwt - X-Nexar-Platform-JWT for workspace-proxy authentication
+ * @param jwt - X-Nexar-Platform-JWT for workspace-proxy authentication (optional in local dev)
  * @param specificFiles - Optional: only process these files (for retry)
  */
 export async function processGDriveJob(
@@ -47,14 +51,23 @@ export async function processGDriveJob(
   }
 
   try {
-    // Validate JWT first (inside try/catch so failure updates job status)
-    if (!jwt) {
-      throw new Error('Authentication required - missing platform JWT. This app requires the Nexar Platform (NAP) environment.')
+    // Check authentication
+    const accessToken = process.env.GDRIVE_ACCESS_TOKEN
+    if (!jwt && !accessToken) {
+      throw new Error(
+        'Authentication required. Either:\n' +
+        '- Deploy to NAP (provides JWT automatically), or\n' +
+        '- Set GDRIVE_ACCESS_TOKEN env var for local development'
+      )
+    }
+
+    if (isLocalDev) {
+      console.log(`[processor] Job ${jobId}: Running in LOCAL DEV mode with access token`)
     }
 
     updateJobStatus(jobId, 'processing')
 
-    const config: GDriveConfig = { jwt }
+    const config: GDriveConfig = isLocalDev ? { accessToken } : { jwt }
     const pad = generateXorPad(key)
 
     // List files from source

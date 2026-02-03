@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import JSZip from 'jszip'
 import { getJob } from '@/lib/job-store'
+import { getDecryptedFile } from '@/lib/processor'
 
 /**
  * Download all successfully decrypted files as a ZIP archive
@@ -23,36 +24,29 @@ export async function GET(
     return NextResponse.json({ error: 'No files to download' }, { status: 400 })
   }
 
-  // TODO: Implement actual ZIP creation with decrypted files
-  // For now, return a placeholder error since the processor module doesn't exist yet
-  return NextResponse.json(
-    { error: 'ZIP download not yet implemented. Processor module required.' },
-    { status: 501 }
-  )
+  try {
+    const zip = new JSZip()
 
-  // Once processor is implemented:
-  // try {
-  //   const zip = new JSZip()
-  //
-  //   for (const file of successFiles) {
-  //     const buffer = await getDecryptedFile(id, file.filename)
-  //     zip.file(file.filename, buffer)
-  //   }
-  //
-  //   const zipBuffer = await zip.generateAsync({
-  //     type: 'nodebuffer',
-  //     compression: 'DEFLATE',
-  //     compressionOptions: { level: 1 }
-  //   })
-  //
-  //   return new NextResponse(zipBuffer, {
-  //     headers: {
-  //       'Content-Type': 'application/zip',
-  //       'Content-Disposition': `attachment; filename="decrypted-${id.slice(0, 8)}.zip"`,
-  //       'Content-Length': zipBuffer.length.toString()
-  //     }
-  //   })
-  // } catch (error) {
-  //   return NextResponse.json({ error: 'Failed to create ZIP' }, { status: 500 })
-  // }
+    for (const file of successFiles) {
+      const buffer = await getDecryptedFile(id, file.filename)
+      zip.file(file.filename, buffer)
+    }
+
+    const zipBlob = await zip.generateAsync({
+      type: 'blob',
+      compression: 'DEFLATE',
+      compressionOptions: { level: 1 }
+    })
+
+    return new Response(zipBlob, {
+      headers: {
+        'Content-Type': 'application/zip',
+        'Content-Disposition': `attachment; filename="decrypted-${id.slice(0, 8)}.zip"`,
+        'Content-Length': zipBlob.size.toString()
+      }
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to create ZIP'
+    return NextResponse.json({ error: message }, { status: 500 })
+  }
 }
