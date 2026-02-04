@@ -33,10 +33,11 @@ export type DestType = 'gdrive' | 'download'
  * - `pending`: Job created, not yet started
  * - `uploading`: Files being uploaded (for source=upload)
  * - `processing`: Actively decrypting files
+ * - `paused`: Processing paused by user (client flow only)
  * - `completed`: All files processed (some may have failed)
  * - `failed`: Job failed entirely (unrecoverable error)
  */
-export type JobStatus = 'pending' | 'uploading' | 'processing' | 'completed' | 'failed'
+export type JobStatus = 'pending' | 'uploading' | 'processing' | 'paused' | 'completed' | 'failed'
 
 /**
  * Individual file processing status
@@ -91,6 +92,9 @@ export interface Job {
   /** Current job status */
   status: JobStatus
 
+  /** Whether the job is paused */
+  isPaused?: boolean
+
   /** Source type chosen by user */
   sourceType: SourceType
 
@@ -105,6 +109,9 @@ export interface Job {
 
   /** If true, creates /decrypted subfolder in same GDrive folder */
   sameFolder?: boolean
+
+  /** If true, use [decrypted] filename prefix instead of subfolder (fallback mode) */
+  useDecryptedPrefix?: boolean
 
   /** Total number of files to process */
   totalFiles: number
@@ -156,7 +163,22 @@ export interface DecryptProgress {
 
   /** Current job status */
   status: JobStatus
+
+  /** ISO timestamp when processing started (for elapsed/remaining time calculation) */
+  startedAt?: string
 }
+
+// ============================================================================
+// Existing Folder Handling
+// ============================================================================
+
+/**
+ * Action to take when "decrypted" folder already exists in source
+ * - `include`: Also decrypt files inside the existing "decrypted" folder
+ * - `overwrite`: Re-decrypt all source files, overwrite existing decrypted files
+ * - `skip`: Skip files that already exist in the "decrypted" folder
+ */
+export type ExistingFolderAction = 'include' | 'overwrite' | 'skip'
 
 // ============================================================================
 // Job Configuration (form input)
@@ -186,6 +208,12 @@ export interface JobConfig {
 
   /** Use same folder with /decrypted subfolder (only for sourceType=gdrive, destType=gdrive) */
   sameFolder?: boolean
+
+  /** If true, use [decrypted] filename prefix instead of subfolder */
+  useDecryptedPrefix?: boolean
+
+  /** Action when "decrypted" folder already exists (only for sameFolder=true) */
+  existingFolderAction?: ExistingFolderAction
 }
 
 // ============================================================================
@@ -214,6 +242,12 @@ export interface CreateJobRequest {
 
   /** Use same folder with /decrypted subfolder */
   sameFolder?: boolean
+
+  /** If true, use [decrypted] filename prefix instead of subfolder */
+  useDecryptedPrefix?: boolean
+
+  /** Action when "decrypted" folder already exists */
+  existingFolderAction?: ExistingFolderAction
 }
 
 /**

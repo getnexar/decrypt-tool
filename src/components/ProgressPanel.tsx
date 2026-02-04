@@ -54,6 +54,8 @@ export function ProgressPanel({ progress, results = [], onCancel, onPause, onRes
   const lastEstimateRef = useRef<number | null>(null)
   const lastProcessedRef = useRef<number>(0)
   const logContainerRef = useRef<HTMLDivElement>(null)
+  const pausedAtRef = useRef<number | null>(null)
+  const accumulatedPauseTimeRef = useRef<number>(0)
 
   // Auto-scroll to bottom when results change
   useEffect(() => {
@@ -62,21 +64,39 @@ export function ProgressPanel({ progress, results = [], onCancel, onPause, onRes
     }
   }, [results])
 
-  // Update current time every second for elapsed time calculation
+  // Update current time every second for elapsed time calculation (only when not paused)
   useEffect(() => {
+    if (isPaused) {
+      // Record when we paused
+      if (pausedAtRef.current === null) {
+        pausedAtRef.current = Date.now()
+      }
+      return
+    }
+
+    // Resuming - accumulate the pause duration
+    if (pausedAtRef.current !== null) {
+      accumulatedPauseTimeRef.current += Date.now() - pausedAtRef.current
+      pausedAtRef.current = null
+    }
+
     const interval = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(interval)
-  }, [])
+  }, [isPaused])
 
   // Reset refs when a new job/retry starts (detected by startedAt change)
   useEffect(() => {
     lastEstimateRef.current = null
     lastProcessedRef.current = 0
+    pausedAtRef.current = null
+    accumulatedPauseTimeRef.current = 0
   }, [progress.startedAt])
 
-  // Calculate elapsed and remaining time
+  // Calculate elapsed and remaining time (excluding paused time)
   const startTime = progress.startedAt ? new Date(progress.startedAt).getTime() : null
-  const elapsedSeconds = startTime ? Math.floor((now - startTime) / 1000) : 0
+  const currentPauseDuration = isPaused && pausedAtRef.current ? Date.now() - pausedAtRef.current : 0
+  const totalPauseTime = accumulatedPauseTimeRef.current + currentPauseDuration
+  const elapsedSeconds = startTime ? Math.floor((now - startTime - totalPauseTime) / 1000) : 0
 
   // Calculate remaining time with smoothing
   let remainingSeconds: number | null = null

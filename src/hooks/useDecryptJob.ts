@@ -22,6 +22,16 @@ export interface UseDecryptJobReturn {
   startJob: (config: JobConfig) => Promise<void>
 
   /**
+   * Restart job with [decrypted] prefix mode (after folder creation fails)
+   */
+  restartWithPrefix: () => Promise<void>
+
+  /**
+   * Retry job after user manually creates folder
+   */
+  retryWithManualFolder: () => Promise<void>
+
+  /**
    * Current job status
    */
   status: JobStatus
@@ -60,6 +70,21 @@ export interface UseDecryptJobReturn {
    * Cancel current job
    */
   cancel: () => void
+
+  /**
+   * Pause current job (client flow only)
+   */
+  pause: () => void
+
+  /**
+   * Resume paused job (client flow only)
+   */
+  resume: () => void
+
+  /**
+   * Is job currently paused (client flow only)
+   */
+  isPaused: boolean
 
   /**
    * Reset to initial state
@@ -134,20 +159,46 @@ export function useDecryptJob(): UseDecryptJobReturn {
     overallProgress: 0,
     status: 'pending'
   })
+  const [serverStartedAt, setServerStartedAt] = useState<string | null>(null)
 
   const pollingRef = useRef<boolean>(false)
+  const isRetryingRef = useRef<boolean>(false)
+  const successfulResultsRef = useRef<FileResult[]>([])
 
   const {
     decryptFiles,
     progress: clientProgress,
     results: clientResults,
     cancel: cancelClient,
+    pause: pauseClient,
+    resume: resumeClient,
     isProcessing: isClientProcessing,
+    isPaused: isClientPaused,
     reset: resetClient
   } = useClientDecrypt()
 
   const isClientFlow = jobConfig?.sourceType === 'upload' && jobConfig?.destType === 'download'
   const progress = isClientFlow ? clientProgress : serverProgress
+
+  // During retry, merge successful results with live client results
+  const liveResults = isRetryingRef.current && isClientProcessing
+    ? [
+        ...successfulResultsRef.current,
+        ...clientResults.map(r => ({
+          filename: r.filename,
+          status: r.status,
+          error: r.error,
+          size: r.size
+        } as FileResult))
+      ]
+    : (isClientFlow && isClientProcessing)
+      ? clientResults.map(r => ({
+          filename: r.filename,
+          status: r.status,
+          error: r.error,
+          size: r.size
+        } as FileResult))
+      : results
 
   /**
    * Poll server job status
@@ -159,15 +210,21 @@ export function useDecryptJob(): UseDecryptJobReturn {
       try {
         const job = await api.get<any>(`/api/jobs/${jobId}`)
 
-        setServerProgress({
+        setServerProgress(prev => ({
           totalFiles: job.totalFiles,
           processedFiles: job.processedFiles,
           currentFile: job.currentFile,
           overallProgress: job.totalFiles > 0
             ? Math.round((job.processedFiles / job.totalFiles) * 100)
             : 0,
-          status: job.status
-        })
+          status: job.status,
+          startedAt: prev.startedAt
+        }))
+
+        // Update results during processing for live log
+        if (job.results && job.results.length > 0) {
+          setResults(job.results)
+        }
 
         if (job.status === 'completed') {
           setResults(job.results)
@@ -177,6 +234,9 @@ export function useDecryptJob(): UseDecryptJobReturn {
         } else if (job.status === 'failed') {
           setResults(job.results || [])
           setStatus('failed')
+          if (job.error) {
+            setError(job.error)
+          }
           pollingRef.current = false
           break
         }
@@ -240,10 +300,14 @@ export function useDecryptJob(): UseDecryptJobReturn {
           key: config.key,
           destType: config.destType,
           destFolder: config.destFolder,
-          sameFolder: config.sameFolder
+          sameFolder: config.sameFolder,
+          useDecryptedPrefix: config.useDecryptedPrefix
         })
 
         setServerJobId(jobId)
+        const startTime = new Date().toISOString()
+        setServerStartedAt(startTime)
+        setServerProgress(prev => ({ ...prev, startedAt: startTime }))
         pollJobStatus(jobId)
       } catch (err) {
         console.error('Failed to start job:', err)
@@ -260,6 +324,35 @@ export function useDecryptJob(): UseDecryptJobReturn {
   }, [decryptFiles, pollJobStatus])
 
   /**
+   * Restart job with [decrypted] prefix mode (after folder creation fails)
+   */
+  const restartWithPrefix = useCallback(async () => {
+    if (!jobConfig) return
+
+    // Clear error and restart with prefix mode enabled
+    setError(null)
+    setStatus('processing')
+    const newConfig = {
+      ...jobConfig,
+      useDecryptedPrefix: true
+    }
+    setJobConfig(newConfig)
+    await startJob(newConfig)
+  }, [jobConfig, startJob])
+
+  /**
+   * Retry job after user manually creates folder
+   */
+  const retryWithManualFolder = useCallback(async () => {
+    if (!jobConfig) return
+
+    // Clear error and restart - will find the manually created folder
+    setError(null)
+    setStatus('processing')
+    await startJob(jobConfig)
+  }, [jobConfig, startJob])
+
+  /**
    * Retry failed files
    */
   const retry = useCallback(async () => {
@@ -271,12 +364,17 @@ export function useDecryptJob(): UseDecryptJobReturn {
     setStatus('processing')
 
     if (isClientFlow && jobConfig.files) {
+      // Save successful results for merging during retry
+      const successResults = results.filter(r => r.status === 'success')
+      successfulResultsRef.current = successResults
+      isRetryingRef.current = true
+
       // Retry client-side with only failed files
       const filesToRetry = jobConfig.files.filter(f => failedFiles.includes(f.name))
       const retryResults = await decryptFiles(filesToRetry, jobConfig.key)
 
       // Merge with existing successful results
-      const successResults = results.filter(r => r.status === 'success')
+      isRetryingRef.current = false
       const newResults: FileResult[] = [
         ...successResults,
         ...retryResults.map(r => ({
@@ -317,6 +415,38 @@ export function useDecryptJob(): UseDecryptJobReturn {
   }, [isClientFlow, cancelClient])
 
   /**
+   * Pause current job
+   */
+  const pause = useCallback(async () => {
+    if (isClientFlow) {
+      pauseClient()
+    } else if (serverJobId) {
+      try {
+        await api.post(`/api/jobs/${serverJobId}/pause`, {})
+        setServerProgress(prev => ({ ...prev, status: 'paused' }))
+      } catch (err) {
+        console.error('Failed to pause job:', err)
+      }
+    }
+  }, [isClientFlow, pauseClient, serverJobId])
+
+  /**
+   * Resume paused job
+   */
+  const resume = useCallback(async () => {
+    if (isClientFlow) {
+      resumeClient()
+    } else if (serverJobId) {
+      try {
+        await api.post(`/api/jobs/${serverJobId}/resume`, {})
+        setServerProgress(prev => ({ ...prev, status: 'processing' }))
+      } catch (err) {
+        console.error('Failed to resume job:', err)
+      }
+    }
+  }, [isClientFlow, resumeClient, serverJobId])
+
+  /**
    * Reset to initial state
    */
   const reset = useCallback(() => {
@@ -325,6 +455,7 @@ export function useDecryptJob(): UseDecryptJobReturn {
     setResults([])
     setJobConfig(null)
     setServerJobId(null)
+    setServerStartedAt(null)
     resetClient()
     setServerProgress({
       totalFiles: 0,
@@ -389,14 +520,19 @@ export function useDecryptJob(): UseDecryptJobReturn {
 
   return {
     startJob,
+    restartWithPrefix,
+    retryWithManualFolder,
     status,
     progress,
-    results,
+    results: liveResults,
     error,
     clearError,
     getBlob,
     retry,
     cancel,
+    pause,
+    resume,
+    isPaused: isClientFlow ? isClientPaused : serverProgress.status === 'paused',
     reset,
     downloadFile,
     downloadAll,

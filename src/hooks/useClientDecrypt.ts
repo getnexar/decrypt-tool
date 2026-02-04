@@ -46,9 +46,24 @@ export interface UseClientDecryptReturn {
   cancel: () => void
 
   /**
+   * Pause decryption after current file completes
+   */
+  pause: () => void
+
+  /**
+   * Resume paused decryption
+   */
+  resume: () => void
+
+  /**
    * Is currently processing
    */
   isProcessing: boolean
+
+  /**
+   * Is currently paused
+   */
+  isPaused: boolean
 
   /**
    * Reset state for new job
@@ -92,9 +107,12 @@ export function useClientDecrypt(): UseClientDecryptReturn {
 
   const [results, setResults] = useState<DecryptResult[]>([])
   const [isProcessing, setIsProcessing] = useState(false)
+  const [isPaused, setIsPaused] = useState(false)
 
   const workerRef = useRef<Worker | null>(null)
   const cancelledRef = useRef(false)
+  const pausedRef = useRef(false)
+  const resumeResolverRef = useRef<(() => void) | null>(null)
 
   /**
    * Reset all state for a new decryption job
@@ -120,8 +138,37 @@ export function useClientDecrypt(): UseClientDecryptReturn {
       workerRef.current.terminate()
       workerRef.current = null
     }
+    // If paused, resolve the wait so we can exit
+    if (resumeResolverRef.current) {
+      resumeResolverRef.current()
+      resumeResolverRef.current = null
+    }
     setIsProcessing(false)
+    setIsPaused(false)
     setProgress(prev => ({ ...prev, status: 'failed' }))
+  }, [])
+
+  /**
+   * Pause decryption after current file completes
+   */
+  const pause = useCallback(() => {
+    pausedRef.current = true
+    setIsPaused(true)
+    setProgress(prev => ({ ...prev, status: 'paused' }))
+  }, [])
+
+  /**
+   * Resume paused decryption
+   */
+  const resume = useCallback(() => {
+    pausedRef.current = false
+    setIsPaused(false)
+    setProgress(prev => ({ ...prev, status: 'processing' }))
+    // Resolve the pause wait if we're waiting
+    if (resumeResolverRef.current) {
+      resumeResolverRef.current()
+      resumeResolverRef.current = null
+    }
   }, [])
 
   /**
@@ -148,7 +195,8 @@ export function useClientDecrypt(): UseClientDecryptReturn {
         totalFiles: files.length,
         processedFiles: 0,
         overallProgress: 0,
-        status: 'processing'
+        status: 'processing',
+        startedAt: new Date().toISOString()
       })
 
       const finalResults: DecryptResult[] = [...initialResults]
@@ -225,6 +273,13 @@ export function useClientDecrypt(): UseClientDecryptReturn {
           currentFile: undefined,
           currentFileProgress: undefined
         }))
+
+        // Check if paused - wait for resume before continuing
+        if (pausedRef.current && i < files.length - 1) {
+          await new Promise<void>(resolve => {
+            resumeResolverRef.current = resolve
+          })
+        }
       }
 
       // Cleanup
@@ -248,7 +303,10 @@ export function useClientDecrypt(): UseClientDecryptReturn {
     progress,
     results,
     cancel,
+    pause,
+    resume,
     isProcessing,
+    isPaused,
     reset
   }
 }

@@ -4,11 +4,15 @@ import { DecryptForm } from '@/components/DecryptForm'
 import { ProgressPanel } from '@/components/ProgressPanel'
 import { ResultsPanel } from '@/components/ResultsPanel'
 import { ErrorAlert } from '@/components/ErrorAlert'
+import { FolderErrorDialog, isFolderCreationError } from '@/components/FolderErrorDialog'
 import { useDecryptJob } from '@/hooks/useDecryptJob'
+import packageJson from '../../package.json'
 
 export default function Home() {
   const {
     startJob,
+    restartWithPrefix,
+    retryWithManualFolder,
     status,
     progress,
     results,
@@ -16,6 +20,9 @@ export default function Home() {
     clearError,
     retry,
     cancel,
+    pause,
+    resume,
+    isPaused,
     reset,
     downloadFile,
     downloadAll,
@@ -33,9 +40,17 @@ export default function Home() {
           <p className="text-muted-foreground">
             Decrypt encrypted Nexar dashcam videos
           </p>
+          <p className="text-xs text-muted-foreground">v{packageJson.version}</p>
         </header>
 
-        {error && (
+        {error && isFolderCreationError(error) ? (
+          <FolderErrorDialog
+            error={error}
+            onUsePrefix={restartWithPrefix}
+            onRetryWithFolder={retryWithManualFolder}
+            onCancel={reset}
+          />
+        ) : error && (
           <ErrorAlert
             message={error}
             onDismiss={clearError}
@@ -46,8 +61,15 @@ export default function Home() {
           <DecryptForm onSubmit={startJob} isProcessing={false} />
         )}
 
-        {status === 'processing' && (
-          <ProgressPanel progress={progress} onCancel={cancel} />
+        {(status === 'processing' || isPaused) && (
+          <ProgressPanel
+            progress={progress}
+            results={results}
+            onCancel={cancel}
+            onPause={pause}
+            onResume={resume}
+            isPaused={isPaused}
+          />
         )}
 
         {(status === 'completed' || status === 'failed') && (

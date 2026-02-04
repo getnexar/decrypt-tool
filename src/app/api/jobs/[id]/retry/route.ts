@@ -53,7 +53,7 @@ export async function POST(
   // Start retry processing
   if (originalJob.sourceType === 'gdrive') {
     const jwt = request.headers.get('X-Nexar-Platform-JWT') || ''
-    processGDriveJob(newJob.id, body.key, jwt, filesToRetry).catch(error => {
+    processGDriveJob(newJob.id, body.key, jwt, undefined, filesToRetry).catch(error => {
       console.error(`Retry processing failed for job ${newJob.id}:`, error instanceof Error ? error.message : 'Unknown error')
     })
   }

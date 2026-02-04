@@ -5,7 +5,8 @@ import {
   updateJobStatus,
   updateJobProgress,
   addFileResult,
-  updateFileResult
+  updateFileResult,
+  isJobPaused
 } from '@/lib/job-store'
 import {
   listMp4Files,
@@ -15,7 +16,7 @@ import {
 } from '@/lib/gdrive'
 import { generateXorPad, decryptChunk, validateMp4Header } from '@/lib/crypto'
 import { sanitizeFilename } from '@/lib/validation'
-import type { GDriveFile } from '@/types'
+import type { GDriveFile, ExistingFolderAction } from '@/types'
 
 // In-memory storage for decrypted files (for download mode)
 // In production, use Cloud Storage or similar
@@ -37,12 +38,14 @@ interface GDriveConfig {
  * @param jobId - The job ID
  * @param key - 32-char hex decryption key (NOT stored, only used in memory)
  * @param jwt - X-Nexar-Platform-JWT for workspace-proxy authentication (optional in local dev)
+ * @param existingFolderAction - How to handle existing "decrypted" folder
  * @param specificFiles - Optional: only process these files (for retry)
  */
 export async function processGDriveJob(
   jobId: string,
   key: string,
   jwt: string,
+  existingFolderAction?: ExistingFolderAction,
   specificFiles?: string[]
 ): Promise<void> {
   const job = getJob(jobId)
@@ -88,16 +91,22 @@ export async function processGDriveJob(
       return
     }
 
-    updateJobProgress(jobId, { totalFiles: files.length })
-
     // Get destination folder ID
     let destFolderId: string | undefined
-    console.log(`[processor] Job ${jobId}: destType=${job.destType}, sameFolder=${job.sameFolder}, sourcePath=${job.sourcePath}`)
+    let useDecryptedPrefix = job.useDecryptedPrefix || false  // Flag to add [decrypted] prefix to filenames
+
+    console.log(`[processor] Job ${jobId}: destType=${job.destType}, sameFolder=${job.sameFolder}, sourcePath=${job.sourcePath}, useDecryptedPrefix=${useDecryptedPrefix}`)
     if (job.destType === 'gdrive') {
       if (job.sameFolder && job.sourcePath) {
-        console.log(`[processor] Job ${jobId}: Creating/getting decrypted folder in ${job.sourcePath}`)
-        destFolderId = await getOrCreateDecryptedFolder(job.sourcePath, config)
-        console.log(`[processor] Job ${jobId}: Destination folder ID: ${destFolderId}`)
+        if (useDecryptedPrefix) {
+          // User chose to use prefix mode
+          destFolderId = job.sourcePath
+          console.log(`[processor] Job ${jobId}: Using source folder with [decrypted] prefix (user choice)`)
+        } else {
+          // Try to create/get decrypted subfolder - if it fails, propagate error to user
+          destFolderId = await getOrCreateDecryptedFolder(job.sourcePath, config)
+          console.log(`[processor] Job ${jobId}: Using decrypted folder: ${destFolderId}`)
+        }
       } else if (job.destPath) {
         destFolderId = job.destPath
         console.log(`[processor] Job ${jobId}: Using specified destination: ${destFolderId}`)
@@ -106,6 +115,14 @@ export async function processGDriveJob(
       console.log(`[processor] Job ${jobId}: Using download mode (files stored in memory)`)
     }
 
+    if (files.length === 0) {
+      console.log(`[processor] Job ${jobId}: No files to process after filtering`)
+      updateJobStatus(jobId, 'completed')
+      return
+    }
+
+    updateJobProgress(jobId, { totalFiles: files.length })
+
     // Initialize file store for download mode
     if (job.destType === 'download') {
       decryptedFileStore.set(jobId, new Map())
@@ -113,6 +130,11 @@ export async function processGDriveJob(
 
     // Process each file
     for (let i = 0; i < files.length; i++) {
+      // Check if paused - wait for resume
+      while (isJobPaused(jobId)) {
+        await new Promise(resolve => setTimeout(resolve, 500))
+      }
+
       const file = files[i]
       const safeFilename = sanitizeFilename(file.name)
 
@@ -145,15 +167,16 @@ export async function processGDriveJob(
         // Handle destination
         if (job.destType === 'gdrive' && destFolderId) {
           // Upload to GDrive
-          console.log(`[processor] Job ${jobId}: Uploading ${safeFilename} to GDrive folder ${destFolderId}`)
+          const uploadFilename = useDecryptedPrefix ? `[decrypted] ${safeFilename}` : safeFilename
+          console.log(`[processor] Job ${jobId}: Uploading ${uploadFilename} to GDrive folder ${destFolderId}`)
           const newFileId = await uploadFile(
             destFolderId,
-            safeFilename,
+            uploadFilename,
             decryptedBuffer,
             'video/mp4',
             config
           )
-          console.log(`[processor] Job ${jobId}: Upload complete - ${safeFilename} -> fileId: ${newFileId}`)
+          console.log(`[processor] Job ${jobId}: Upload complete - ${uploadFilename} -> fileId: ${newFileId}`)
 
           updateFileResult(jobId, file.name, {
             status: 'success',

@@ -1,0 +1,16 @@
+app_id: decrypt-tool
+name: Decrypt Tool
+description: Decrypt encrypted Nexar dashcam videos with XOR cipher
+tags:
+  - internal-tools
+  - video
+capabilities:
+  - google-drive
+resources:
+  memory: "2Gi"
+  cpu: "2"
+  min_instances: 1
+  max_instances: 5
+sidecar:
+  max_body_size: "100m"
+cost_center: "RD-ENG-GEN-0"

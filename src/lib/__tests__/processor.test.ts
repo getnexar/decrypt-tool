@@ -77,7 +77,7 @@ describe('Processor', () => {
         vi.mocked(gdrive.downloadFileAsBuffer).mockResolvedValue(encryptedBuffer)
 
         // Process job
-        await processGDriveJob(job.id, testKey)
+        await processGDriveJob(job.id, testKey, '')
 
         // Verify job status
         const updatedJob = getJob(job.id)
@@ -95,11 +95,11 @@ describe('Processor', () => {
         // Verify GDrive API calls
         expect(gdrive.listMp4Files).toHaveBeenCalledWith(
           testFolderId,
-          { accessToken: mockAccessToken }
+          { jwt: '' }
         )
         expect(gdrive.downloadFileAsBuffer).toHaveBeenCalledWith(
           'file1',
-          { accessToken: mockAccessToken }
+          { jwt: '' }
         )
       })
 
@@ -147,7 +147,7 @@ describe('Processor', () => {
 
         vi.mocked(gdrive.downloadFileAsBuffer).mockResolvedValue(encryptedBuffer)
 
-        await processGDriveJob(job.id, testKey)
+        await processGDriveJob(job.id, testKey, '')
 
         const updatedJob = getJob(job.id)
         expect(updatedJob?.status).toBe('completed')
@@ -193,7 +193,7 @@ describe('Processor', () => {
 
         vi.mocked(gdrive.downloadFileAsBuffer).mockResolvedValue(encryptedBuffer)
 
-        await processGDriveJob(job.id, testKey)
+        await processGDriveJob(job.id, testKey, '')
 
         // Retrieve decrypted file
         const decryptedFile = await getDecryptedFile(job.id, 'video1.mp4')
@@ -235,7 +235,7 @@ describe('Processor', () => {
         vi.mocked(gdrive.downloadFileAsBuffer).mockResolvedValue(encryptedBuffer)
         vi.mocked(gdrive.uploadFile).mockResolvedValue('new-file-id-123')
 
-        await processGDriveJob(job.id, testKey)
+        await processGDriveJob(job.id, testKey, '')
 
         // Verify upload was called
         expect(gdrive.uploadFile).toHaveBeenCalledWith(
@@ -243,7 +243,7 @@ describe('Processor', () => {
           'video1.mp4',
           expect.any(Buffer),
           'video/mp4',
-          { accessToken: mockAccessToken }
+          { jwt: '' }
         )
 
         // Verify result contains output path
@@ -284,12 +284,12 @@ describe('Processor', () => {
         vi.mocked(gdrive.getOrCreateDecryptedFolder).mockResolvedValue('decrypted-folder-id')
         vi.mocked(gdrive.uploadFile).mockResolvedValue('new-file-id-123')
 
-        await processGDriveJob(job.id, testKey)
+        await processGDriveJob(job.id, testKey, '')
 
         // Verify decrypted folder was created/retrieved
         expect(gdrive.getOrCreateDecryptedFolder).toHaveBeenCalledWith(
           testFolderId,
-          { accessToken: mockAccessToken }
+          { jwt: '' }
         )
 
         // Verify upload to decrypted folder
@@ -298,7 +298,7 @@ describe('Processor', () => {
           'video1.mp4',
           expect.any(Buffer),
           'video/mp4',
-          { accessToken: mockAccessToken }
+          { jwt: '' }
         )
       })
     })
@@ -336,7 +336,7 @@ describe('Processor', () => {
         vi.mocked(gdrive.downloadFileAsBuffer).mockResolvedValue(encryptedBuffer)
 
         // Use correct key to decrypt (should fail validation)
-        await processGDriveJob(job.id, testKey)
+        await processGDriveJob(job.id, testKey, '')
 
         const updatedJob = getJob(job.id)
         expect(updatedJob?.status).toBe('completed')
@@ -391,7 +391,7 @@ describe('Processor', () => {
           .mockRejectedValueOnce(new Error('Network error'))
           .mockResolvedValueOnce(validBuffer)
 
-        await processGDriveJob(job.id, testKey)
+        await processGDriveJob(job.id, testKey, '')
 
         const updatedJob = getJob(job.id)
         expect(updatedJob?.status).toBe('completed')
@@ -407,7 +407,7 @@ describe('Processor', () => {
 
       it('should handle job not found', async () => {
         await expect(
-          processGDriveJob('non-existent-job', testKey)
+          processGDriveJob('non-existent-job', testKey, '')
         ).rejects.toThrow('Job non-existent-job not found')
       })
 
@@ -491,7 +491,7 @@ describe('Processor', () => {
         vi.mocked(gdrive.downloadFileAsBuffer).mockResolvedValue(encryptedBuffer)
 
         // Retry only video2.mp4
-        await processGDriveJob(job.id, testKey, ['video2.mp4'])
+        await processGDriveJob(job.id, testKey, '', undefined, ['video2.mp4'])
 
         const updatedJob = getJob(job.id)
         expect(updatedJob?.totalFiles).toBe(1)
@@ -534,7 +534,7 @@ describe('Processor', () => {
 
         vi.mocked(gdrive.downloadFileAsBuffer).mockResolvedValue(encryptedBuffer)
 
-        await processGDriveJob(job.id, testKey)
+        await processGDriveJob(job.id, testKey, '')
 
         // File should still be in results with original name
         const updatedJob = getJob(job.id)
@@ -553,7 +553,7 @@ describe('Processor', () => {
 
         vi.mocked(gdrive.listMp4Files).mockResolvedValue([])
 
-        await processGDriveJob(job.id, testKey)
+        await processGDriveJob(job.id, testKey, '')
 
         const updatedJob = getJob(job.id)
         expect(updatedJob?.status).toBe('completed')
@@ -600,7 +600,7 @@ describe('Processor', () => {
 
         vi.mocked(gdrive.downloadFileAsBuffer).mockResolvedValue(encryptedBuffer)
 
-        await processGDriveJob(job.id, testKey)
+        await processGDriveJob(job.id, testKey, '')
 
         const updatedJob = getJob(job.id)
         expect(updatedJob?.totalFiles).toBe(2)
@@ -642,7 +642,7 @@ describe('Processor', () => {
 
       vi.mocked(gdrive.downloadFileAsBuffer).mockResolvedValue(encryptedBuffer)
 
-      await processGDriveJob(job.id, testKey)
+      await processGDriveJob(job.id, testKey, '')
 
       const file = await getDecryptedFile(job.id, 'video1.mp4')
 
@@ -685,7 +685,7 @@ describe('Processor', () => {
 
       vi.mocked(gdrive.downloadFileAsBuffer).mockResolvedValue(encryptedBuffer)
 
-      await processGDriveJob(job.id, testKey)
+      await processGDriveJob(job.id, testKey, '')
 
       await expect(
         getDecryptedFile(job.id, 'video2.mp4')
@@ -723,7 +723,7 @@ describe('Processor', () => {
 
       vi.mocked(gdrive.downloadFileAsBuffer).mockResolvedValue(encryptedBuffer)
 
-      await processGDriveJob(job.id, testKey)
+      await processGDriveJob(job.id, testKey, '')
 
       // File should be retrievable before cleanup
       const fileBefore = await getDecryptedFile(job.id, 'video1.mp4')
@@ -775,12 +775,12 @@ describe('Processor', () => {
 
       vi.mocked(gdrive.downloadFileAsBuffer).mockResolvedValue(encryptedBuffer)
 
-      await processGDriveJob(job.id, testKey)
+      await processGDriveJob(job.id, testKey, '')
 
       // Verify that GDrive functions were called with the correct access token
       expect(gdrive.listMp4Files).toHaveBeenCalledWith(
         testFolderId,
-        { accessToken: mockAccessToken }
+        { jwt: '' }
       )
     })
   })

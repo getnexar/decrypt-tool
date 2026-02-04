@@ -31,6 +31,47 @@ const WORKSPACE_PROXY_URL = process.env.WORKSPACE_PROXY_URL || 'https://workspac
 const insecureAgent = new Agent({ connect: { rejectUnauthorized: false } })
 
 // ============================================================================
+// Error Classes
+// ============================================================================
+
+/**
+ * Error thrown when Google Drive authentication fails
+ */
+export class GDriveAuthError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'GDriveAuthError'
+  }
+}
+
+/**
+ * Parse API error and throw appropriate error type
+ */
+function handleApiError(status: number, errorBody: string): never {
+  if (status === 401) {
+    if (isLocalDev) {
+      throw new GDriveAuthError(
+        'Google Drive access token expired or invalid. Please refresh your GDRIVE_ACCESS_TOKEN in .env.local'
+      )
+    } else {
+      throw new GDriveAuthError(
+        'Google Drive authentication failed. Please sign in again.'
+      )
+    }
+  }
+
+  if (status === 403) {
+    throw new Error('Access denied. You may not have permission to access this folder.')
+  }
+
+  if (status === 404) {
+    throw new Error('Folder not found. Please check the Google Drive URL.')
+  }
+
+  throw new Error(`Google Drive error: ${status}`)
+}
+
+// ============================================================================
 // Configuration
 // ============================================================================
 
@@ -80,7 +121,7 @@ async function driveRequest<T>(
 
     if (!response.ok) {
       const error = await response.text()
-      throw new Error(`Drive API error: ${response.status} - ${error}`)
+      handleApiError(response.status, error)
     }
 
     return response.json()
@@ -100,7 +141,7 @@ async function driveRequest<T>(
 
   if (!response.ok) {
     const error = await response.text()
-    throw new Error(`Drive API error: ${response.status} - ${error}`)
+    handleApiError(response.status, error)
   }
 
   return response.json()
@@ -144,6 +185,11 @@ export async function listMp4Files(
       const filePath = path ? `${path}/${file.name}` : file.name
 
       if (file.mimeType === 'application/vnd.google-apps.folder') {
+        // Skip "decrypted" folder to avoid re-processing already decrypted files
+        if (file.name.toLowerCase() === 'decrypted') {
+          console.log(`[gdrive] Skipping "decrypted" folder at ${filePath}`)
+          continue
+        }
         // Recurse into subfolder
         const subFiles = await listMp4Files(file.id, config, filePath)
         files.push(...subFiles)
@@ -205,7 +251,8 @@ export async function downloadFile(
   }
 
   if (!response.ok) {
-    throw new Error(`Failed to download file: ${response.status}`)
+    const error = await response.text()
+    handleApiError(response.status, error)
   }
 
   if (!response.body) {
@@ -253,7 +300,8 @@ export async function downloadFileAsBuffer(
   }
 
   if (!response.ok) {
-    throw new Error(`Failed to download file: ${response.status}`)
+    const error = await response.text()
+    handleApiError(response.status, error)
   }
 
   const arrayBuffer = await response.arrayBuffer()
@@ -270,8 +318,11 @@ export async function downloadFileAsBuffer(
  * @param config - API configuration with access token
  * @returns Google Drive file ID of uploaded file
  */
-// Maximum size for single-request upload (10MB)
-const MAX_SIMPLE_UPLOAD_SIZE = 10 * 1024 * 1024
+// Maximum size for simple upload
+// - Local dev: 10MB (Google's multipart upload limit)
+// - NAP mode: 1MB (Envoy proxy buffer limit in GCP Internal Load Balancer)
+const MAX_SIMPLE_UPLOAD_SIZE_LOCAL = 10 * 1024 * 1024
+const MAX_SIMPLE_UPLOAD_SIZE_NAP = 1 * 1024 * 1024
 
 export async function uploadFile(
   folderId: string,
@@ -297,8 +348,12 @@ export async function uploadFile(
 
   const token = config.accessToken || process.env.GDRIVE_ACCESS_TOKEN
 
-  // Use resumable upload for large files
-  if (buffer.length > MAX_SIMPLE_UPLOAD_SIZE) {
+  // Determine max size for simple upload based on mode
+  const maxSimpleUploadSize = isLocalDev ? MAX_SIMPLE_UPLOAD_SIZE_LOCAL : MAX_SIMPLE_UPLOAD_SIZE_NAP
+
+  // Use resumable upload for large files (bypasses Envoy buffer limit in NAP mode)
+  if (buffer.length > maxSimpleUploadSize) {
+    console.log(`[gdrive] File size ${buffer.length} exceeds ${maxSimpleUploadSize} bytes, using resumable upload`)
     return uploadFileResumable(folderId, filename, buffer, mimeType, config)
   }
 
@@ -340,16 +395,17 @@ export async function uploadFile(
 
     if (!response.ok) {
       const error = await response.text()
-      throw new Error(`Failed to upload file: ${response.status} - ${error}`)
+      handleApiError(response.status, error)
     }
 
     const result = await response.json() as { id: string }
     return result.id
   }
 
-  // NAP mode: workspace-proxy with FormData
+  // NAP mode: workspace-proxy expects 'parent' as separate form field (not in metadata JSON)
+  console.log(`[gdrive] NAP upload: file="${filename}" to parent="${folderId}"`)
   const formData = new FormData()
-  formData.append('metadata', JSON.stringify(metadata))
+  formData.append('parent', folderId)
   const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer
   formData.append('file', new Blob([arrayBuffer], { type: mimeType }), filename)
 
@@ -366,12 +422,15 @@ export async function uploadFile(
     }
   )
 
+  const responseText = await response.text()
+  console.log(`[gdrive] NAP upload response: status=${response.status}, body=${responseText.substring(0, 500)}`)
+
   if (!response.ok) {
-    const error = await response.text()
-    throw new Error(`Failed to upload file: ${response.status} - ${error}`)
+    handleApiError(response.status, responseText)
   }
 
-  const result = await response.json() as { id: string }
+  const result = JSON.parse(responseText) as { id: string, webViewLink?: string }
+  console.log(`[gdrive] NAP upload success: fileId=${result.id}, webViewLink=${result.webViewLink}`)
   return result.id
 }
 
@@ -410,7 +469,7 @@ async function uploadFileResumable(
 
     if (!initResponse.ok) {
       const error = await initResponse.text()
-      throw new Error(`Failed to initiate resumable upload: ${initResponse.status} - ${error}`)
+      handleApiError(initResponse.status, error)
     }
 
     const uploadUri = initResponse.headers.get('Location')
@@ -435,7 +494,7 @@ async function uploadFileResumable(
 
     if (!uploadResponse.ok) {
       const error = await uploadResponse.text()
-      throw new Error(`Failed to upload file content: ${uploadResponse.status} - ${error}`)
+      handleApiError(uploadResponse.status, error)
     }
 
     const result = await uploadResponse.json() as { id: string }
@@ -443,35 +502,60 @@ async function uploadFileResumable(
   }
 
   // NAP mode: workspace-proxy resumable upload
+  // Step 1: Initiate resumable upload session
+  console.log(`[gdrive] NAP resumable upload: initiating for "${filename}" (${buffer.length} bytes)`)
   const initResponse = await fetch(
     `${WORKSPACE_PROXY_URL}/drive/files/resumable`,
     {
       method: 'POST',
       headers: {
         'X-Nexar-Platform-JWT': config.jwt || '',
-        'Content-Type': 'application/json',
-        'X-Upload-Content-Type': mimeType,
-        'X-Upload-Content-Length': buffer.length.toString()
+        'Content-Type': 'application/json'
       },
-      body: JSON.stringify(metadata),
+      body: JSON.stringify({
+        name: filename,
+        mimeType,
+        parentId: folderId,
+        size: buffer.length
+      }),
       // @ts-expect-error - dispatcher is valid for undici but not in RequestInit types
       dispatcher: insecureAgent
     }
   )
 
+  const initResponseText = await initResponse.text()
+  console.log(`[gdrive] NAP resumable init response: status=${initResponse.status}, body=${initResponseText.substring(0, 500)}`)
+
   if (!initResponse.ok) {
-    const error = await initResponse.text()
-    throw new Error(`Failed to initiate resumable upload: ${initResponse.status} - ${error}`)
+    // If resumable endpoint doesn't exist (404), throw clear error
+    if (initResponse.status === 404) {
+      throw new Error(
+        `Resumable upload endpoint not available (HTTP 404). ` +
+        `File size ${buffer.length} bytes exceeds 1MB limit for simple uploads. ` +
+        `Contact platform team to enable POST /drive/files/resumable endpoint.`
+      )
+    }
+    handleApiError(initResponse.status, initResponseText)
   }
 
-  const uploadUri = initResponse.headers.get('Location')
+  // Parse response - uploadUrl should be in JSON body per @olympum's example
+  let initResult: { uploadUrl?: string }
+  try {
+    initResult = JSON.parse(initResponseText)
+  } catch {
+    throw new Error(`Invalid JSON response from resumable upload initiation: ${initResponseText.substring(0, 200)}`)
+  }
+
+  const uploadUri = initResult.uploadUrl
   if (!uploadUri) {
-    throw new Error('No upload URI returned from resumable upload initiation')
+    throw new Error(
+      `No uploadUrl in resumable upload response. Response: ${initResponseText.substring(0, 200)}`
+    )
   }
 
-  // Step 2: Upload the file content
-  // Convert Buffer to Blob for fetch compatibility
-  // Create a proper ArrayBuffer copy to avoid SharedArrayBuffer type issues
+  console.log(`[gdrive] NAP resumable upload: got upload URL, uploading ${buffer.length} bytes directly to Google`)
+
+  // Step 2: Upload directly to Google (bypasses platform load balancer)
   const napArrayBuffer = new ArrayBuffer(buffer.length)
   new Uint8Array(napArrayBuffer).set(buffer)
   const napBlob = new Blob([napArrayBuffer])
@@ -482,18 +566,29 @@ async function uploadFileResumable(
       'Content-Type': mimeType,
       'Content-Length': buffer.length.toString()
     },
-    body: napBlob,
-    // @ts-expect-error - dispatcher is valid for undici but not in RequestInit types
-    dispatcher: insecureAgent
+    body: napBlob
+    // Note: No dispatcher needed - uploading directly to Google, not through workspace-proxy
   })
 
   if (!uploadResponse.ok) {
     const error = await uploadResponse.text()
-    throw new Error(`Failed to upload file content: ${uploadResponse.status} - ${error}`)
+    console.log(`[gdrive] NAP resumable upload failed: status=${uploadResponse.status}, error=${error.substring(0, 500)}`)
+    handleApiError(uploadResponse.status, error)
   }
 
   const result = await uploadResponse.json() as { id: string }
+  console.log(`[gdrive] NAP resumable upload success: fileId=${result.id}`)
   return result.id
+}
+
+/**
+ * Custom error for folder creation failures
+ */
+export class FolderCreationError extends Error {
+  constructor(message: string, public readonly canRetryWithPrefix: boolean = true) {
+    super(message)
+    this.name = 'FolderCreationError'
+  }
 }
 
 /**
@@ -528,40 +623,53 @@ export async function createFolder(
 
     if (!response.ok) {
       const error = await response.text()
-      throw new Error(`Failed to create folder: ${response.status} - ${error}`)
+      handleApiError(response.status, error)
     }
 
     const result = await response.json() as { id: string }
     return result.id
   }
 
-  // NAP mode: workspace-proxy expects multipart/form-data
-  const formData = new FormData()
-  formData.append('metadata', JSON.stringify({
-    name,
-    mimeType: 'application/vnd.google-apps.folder',
-    parents: [parentId]
-  }))
-  // Workspace-proxy requires a file field - use empty blob for folders
-  formData.append('file', new Blob([]), name)
+  // NAP mode: Try folder creation via workspace-proxy
+  // Use the /drive/folders endpoint if available, otherwise try /drive/files with mimeType
+  console.log(`[gdrive] NAP: Attempting to create folder "${name}" in parent ${parentId}`)
 
-  const response = await fetch(`${WORKSPACE_PROXY_URL}/drive/files`, {
-    method: 'POST',
-    headers: {
-      'X-Nexar-Platform-JWT': config.jwt || ''
-      // Note: Don't set Content-Type - FormData sets it automatically with boundary
-    },
-    body: formData,
-    // @ts-expect-error - dispatcher is valid for undici but not in RequestInit types
-    dispatcher: insecureAgent
-  })
+  const response = await fetch(
+    `${WORKSPACE_PROXY_URL}/drive/folders`,
+    {
+      method: 'POST',
+      headers: {
+        'X-Nexar-Platform-JWT': config.jwt || '',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        name,
+        parentId
+      }),
+      // @ts-expect-error - dispatcher is valid for undici but not in RequestInit types
+      dispatcher: insecureAgent
+    }
+  )
+
+  const responseText = await response.text()
+  console.log(`[gdrive] NAP folder creation response: status=${response.status}, body=${responseText.substring(0, 500)}`)
 
   if (!response.ok) {
-    const error = await response.text()
-    throw new Error(`Failed to create folder: ${response.status} - ${error}`)
+    if (response.status === 404) {
+      throw new FolderCreationError(
+        'Folder creation is not supported by workspace-proxy. ' +
+        'You can either upload files with a [decrypted] prefix in the same folder, ' +
+        'or select a different destination folder.',
+        true
+      )
+    }
+    throw new FolderCreationError(
+      `Failed to create folder: ${response.status} - ${responseText.substring(0, 200)}`,
+      true
+    )
   }
 
-  const result = await response.json() as { id: string }
+  const result = JSON.parse(responseText) as { id: string }
   return result.id
 }
 

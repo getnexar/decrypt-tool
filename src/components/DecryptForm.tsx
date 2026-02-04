@@ -8,8 +8,9 @@ import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { FileDropzone } from './FileDropzone'
+import { ExistingFolderDialog } from './ExistingFolderDialog'
 import { validateHexKey, parseGDriveUrl } from '@/lib/validation'
-import type { JobConfig, SourceType, DestType } from '@/types'
+import type { JobConfig, SourceType, DestType, ExistingFolderAction } from '@/types'
 
 interface DecryptFormProps {
   onSubmit: (config: JobConfig) => void
@@ -25,15 +26,15 @@ export function DecryptForm({ onSubmit, isProcessing }: DecryptFormProps) {
   const [destType, setDestType] = useState<DestType>('download')
   const [destFolder, setDestFolder] = useState('')
   const [sameFolder, setSameFolder] = useState(true)
+  const [showExistingFolderDialog, setShowExistingFolderDialog] = useState(false)
+  const [isChecking, setIsChecking] = useState(false)
 
   const keyValid = validateHexKey(key)
   const sourceValid = sourceType === 'upload' ? files.length > 0 : !!parseGDriveUrl(sourceFolder)
   const destValid = destType === 'download' || (sameFolder || !!parseGDriveUrl(destFolder))
-  const formValid = keyValid && sourceValid && destValid && !isProcessing
+  const formValid = keyValid && sourceValid && destValid && !isProcessing && !isChecking
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!formValid) return
+  const submitJob = (existingFolderAction?: ExistingFolderAction) => {
     onSubmit({
       sourceType,
       sourceFolder: sourceType === 'gdrive' ? sourceFolder : undefined,
@@ -41,8 +42,39 @@ export function DecryptForm({ onSubmit, isProcessing }: DecryptFormProps) {
       key,
       destType,
       destFolder: destType === 'gdrive' && !sameFolder ? destFolder : undefined,
-      sameFolder: destType === 'gdrive' ? sameFolder : undefined
+      sameFolder: destType === 'gdrive' ? sameFolder : undefined,
+      existingFolderAction
     })
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!formValid) return
+
+    // Check for existing "decrypted" folder when using sameFolder option
+    if (sourceType === 'gdrive' && destType === 'gdrive' && sameFolder) {
+      setIsChecking(true)
+      try {
+        const response = await fetch(`/api/gdrive/check-folder?folderUrl=${encodeURIComponent(sourceFolder)}`)
+        const data = await response.json()
+
+        if (data.hasDecryptedFolder) {
+          setIsChecking(false)
+          setShowExistingFolderDialog(true)
+          return
+        }
+      } catch (error) {
+        console.error('Failed to check for existing folder:', error)
+        // Continue anyway if check fails
+      }
+      setIsChecking(false)
+    }
+
+    submitJob()
+  }
+
+  const handleExistingFolderAction = (action: ExistingFolderAction) => {
+    submitJob(action)
   }
 
   return (
@@ -141,10 +173,16 @@ export function DecryptForm({ onSubmit, isProcessing }: DecryptFormProps) {
           </div>
 
           <Button type="submit" disabled={!formValid} className="w-full">
-            {isProcessing ? 'Processing...' : 'Start Decryption'}
+            {isProcessing ? 'Processing...' : isChecking ? 'Checking...' : 'Start Decryption'}
           </Button>
         </CardContent>
       </Card>
+
+      <ExistingFolderDialog
+        open={showExistingFolderDialog}
+        onOpenChange={setShowExistingFolderDialog}
+        onSelect={handleExistingFolderAction}
+      />
     </form>
   )
 }

@@ -20,6 +20,7 @@ export function createJob(config: {
   destType: DestType
   destPath?: string
   sameFolder?: boolean
+  useDecryptedPrefix?: boolean
 }): Job {
   const now = new Date().toISOString()
   const expiresAt = new Date(Date.now() + JOB_EXPIRATION_MS).toISOString()
@@ -32,6 +33,7 @@ export function createJob(config: {
     destType: config.destType,
     destPath: config.destPath,
     sameFolder: config.sameFolder,
+    useDecryptedPrefix: config.useDecryptedPrefix,
     totalFiles: 0,
     processedFiles: 0,
     results: [],
@@ -72,6 +74,31 @@ export function updateJobStatus(jobId: string, status: JobStatus, error?: string
     job.error = error
   }
   job.updatedAt = new Date().toISOString()
+}
+
+export function pauseJob(jobId: string): boolean {
+  const job = jobs.get(jobId)
+  if (!job || job.status !== 'processing') return false
+
+  job.isPaused = true
+  job.status = 'paused'
+  job.updatedAt = new Date().toISOString()
+  return true
+}
+
+export function resumeJob(jobId: string): boolean {
+  const job = jobs.get(jobId)
+  if (!job || !job.isPaused) return false
+
+  job.isPaused = false
+  job.status = 'processing'
+  job.updatedAt = new Date().toISOString()
+  return true
+}
+
+export function isJobPaused(jobId: string): boolean {
+  const job = jobs.get(jobId)
+  return job?.isPaused ?? false
 }
 
 export function updateJobProgress(jobId: string, update: {

@@ -33,7 +33,8 @@ export async function POST(request: NextRequest) {
       sourcePath: body.sourceFolder ? parseGDriveUrl(body.sourceFolder) || undefined : undefined,
       destType: body.destType,
       destPath: body.destFolder ? parseGDriveUrl(body.destFolder) || undefined : undefined,
-      sameFolder: body.sameFolder
+      sameFolder: body.sameFolder,
+      useDecryptedPrefix: body.useDecryptedPrefix
     })
 
     // Start processing in background for GDrive source
@@ -42,7 +43,7 @@ export async function POST(request: NextRequest) {
       const jwt = request.headers.get('X-Nexar-Platform-JWT') || ''
 
       // Don't await - let it run in background
-      processGDriveJob(job.id, body.key, jwt).catch(error => {
+      processGDriveJob(job.id, body.key, jwt, body.existingFolderAction).catch(error => {
         console.error(`Background processing failed for job ${job.id}:`, error instanceof Error ? error.message : 'Unknown error')
       })
     }

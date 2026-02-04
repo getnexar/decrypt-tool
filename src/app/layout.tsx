@@ -46,7 +46,7 @@ const roobert = localFont({
 });
 
 export const metadata: Metadata = {
-  title: "Decrypt Tool v13",
+  title: "Decrypt Tool",
   description: "Decrypt encrypted Nexar dashcam videos",
 };
 
