@@ -92,6 +92,7 @@ export async function POST(
     // First call: list files and set up destination folder
     // Use atomic check to prevent race condition with parallel workers
     if (!job.files || job.files.length === 0) {
+      console.log(`[process-next] First call for job ${jobId}: sourcePath=${job.sourcePath}, destType=${job.destType}, sameFolder=${job.sameFolder}, destPath=${job.destPath}`)
       if (!job.sourcePath) {
         return NextResponse.json(
           { error: 'No source path specified' },
@@ -120,21 +121,28 @@ export async function POST(
 
       if (didSetFiles) {
         // This worker won the race - resolve destination folder
+        console.log(`[process-next] Resolving dest folder: destType=${job.destType}, sameFolder=${job.sameFolder}, sourcePath=${job.sourcePath}, destPath=${job.destPath}`)
         if (job.destType === 'gdrive') {
           let destFolderId: string | undefined
 
           if (job.sameFolder && job.sourcePath) {
             if (job.useDecryptedPrefix) {
               destFolderId = job.sourcePath
+              console.log(`[process-next] Using source folder with prefix: ${destFolderId}`)
             } else {
               destFolderId = await getOrCreateDecryptedFolder(job.sourcePath, config)
+              console.log(`[process-next] Got/created decrypted folder: ${destFolderId}`)
             }
           } else if (job.destPath) {
             destFolderId = job.destPath
+            console.log(`[process-next] Using specified destPath: ${destFolderId}`)
+          } else {
+            console.log(`[process-next] WARNING: No dest folder resolved! sameFolder=${job.sameFolder}, sourcePath=${job.sourcePath}, destPath=${job.destPath}`)
           }
 
           if (destFolderId) {
             setJobResolvedDestFolder(jobId, destFolderId)
+            console.log(`[process-next] Set resolved dest folder: ${destFolderId}`)
           }
         }
 
@@ -149,18 +157,26 @@ export async function POST(
       }
 
       // Another worker already initialized - wait for it to complete setup
-      // Poll until files are available or timeout
+      // Poll until files AND dest folder are available or timeout
       let refreshedJob = getJob(jobId)
       let waitAttempts = 0
-      while ((!refreshedJob?.files || refreshedJob.files.length === 0) && waitAttempts < 10) {
-        await new Promise(r => setTimeout(r, 100))
+      const needsDestFolder = job.destType === 'gdrive'
+      while (waitAttempts < 20) {
         refreshedJob = getJob(jobId)
+        const hasFiles = refreshedJob?.files && refreshedJob.files.length > 0
+        const hasDestFolder = !needsDestFolder || refreshedJob?.resolvedDestFolderId
+        if (hasFiles && hasDestFolder) break
+        await new Promise(r => setTimeout(r, 100))
         waitAttempts++
       }
 
       if (!refreshedJob || !refreshedJob.files || refreshedJob.files.length === 0) {
         return NextResponse.json({ error: 'Job initialization timeout' }, { status: 500 })
       }
+      if (needsDestFolder && !refreshedJob.resolvedDestFolderId) {
+        return NextResponse.json({ error: 'Destination folder resolution timeout' }, { status: 500 })
+      }
+      console.log(`[process-next] Worker waited ${waitAttempts * 100}ms, destFolderId=${refreshedJob.resolvedDestFolderId}`)
       // Fall through to claim files below
     }
 
@@ -218,23 +234,28 @@ export async function POST(
 
       try {
         // Download file
+        console.log(`[process-next] Downloading ${file.name}...`)
         const encryptedBuffer = await downloadFileAsBuffer(file.id, config)
         const encryptedData = new Uint8Array(encryptedBuffer)
+        console.log(`[process-next] Downloaded ${file.name}, size=${encryptedBuffer.length}`)
 
         // Validate header after decryption
         const headerDecrypted = decryptChunk(encryptedData.slice(0, 12), pad, 0)
         if (!validateMp4Header(headerDecrypted)) {
           throw new Error('Invalid MP4 header after decryption - wrong key?')
         }
+        console.log(`[process-next] MP4 header valid for ${file.name}`)
 
         // Decrypt full file
         const decryptedData = decryptChunk(encryptedData, pad, 0)
         const decryptedBuffer = Buffer.from(decryptedData)
+        console.log(`[process-next] Decrypted ${file.name}, destType=${job.destType}, destFolderId=${destFolderId}`)
 
         // Handle destination
         if (job.destType === 'gdrive' && destFolderId) {
           // Upload to GDrive
           const uploadFilename = useDecryptedPrefix ? `[decrypted] ${safeFilename}` : safeFilename
+          console.log(`[process-next] Uploading ${uploadFilename} to folder ${destFolderId}...`)
           const newFileId = await uploadFile(
             destFolderId,
             uploadFilename,

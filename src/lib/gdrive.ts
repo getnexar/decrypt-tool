@@ -276,6 +276,7 @@ export async function downloadFileAsBuffer(
   config: GDriveConfig
 ): Promise<Buffer> {
   const token = config.accessToken || process.env.GDRIVE_ACCESS_TOKEN
+  console.log(`[gdrive] Downloading file ${fileId}...`)
 
   let response: Response
   if (isLocalDev && token) {
@@ -285,6 +286,7 @@ export async function downloadFileAsBuffer(
         'Authorization': `Bearer ${token}`
       }
     })
+    console.log(`[gdrive] Download response: status=${response.status}`)
   } else {
     // NAP mode: workspace-proxy
     response = await fetch(
@@ -381,6 +383,7 @@ export async function uploadFile(
       Buffer.from(closeDelimiter)
     ])
 
+    console.log(`[gdrive] Local dev upload: file="${filename}" to parent="${folderId}" (${buffer.length} bytes)`)
     const response = await fetch(
       `${UPLOAD_API_BASE}/files?uploadType=multipart`,
       {
@@ -393,12 +396,15 @@ export async function uploadFile(
       }
     )
 
+    console.log(`[gdrive] Upload response: status=${response.status}`)
     if (!response.ok) {
       const error = await response.text()
+      console.log(`[gdrive] Upload error: ${error}`)
       handleApiError(response.status, error)
     }
 
     const result = await response.json() as { id: string }
+    console.log(`[gdrive] Upload success: fileId=${result.id}`)
     return result.id
   }
 
