@@ -7,11 +7,11 @@
 
 'use client'
 
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import { useClientDecrypt } from './useClientDecrypt'
 import { downloadFile as downloadBlob, downloadAsZip, downloadCsv as exportCsv } from '@/lib/download'
 import { api, ApiError } from '@/lib/api'
-import type { JobConfig, DecryptProgress, FileResult } from '@/types'
+import type { JobConfig, DecryptProgress, FileResult, ProcessNextResponse } from '@/types'
 
 type JobStatus = 'idle' | 'processing' | 'completed' | 'failed'
 
@@ -161,7 +161,9 @@ export function useDecryptJob(): UseDecryptJobReturn {
   })
   const [serverStartedAt, setServerStartedAt] = useState<string | null>(null)
 
-  const pollingRef = useRef<boolean>(false)
+  const processingRef = useRef<boolean>(false)
+  const pausedRef = useRef<boolean>(false)
+  const keyRef = useRef<string>('')
   const isRetryingRef = useRef<boolean>(false)
   const successfulResultsRef = useRef<FileResult[]>([])
 
@@ -179,6 +181,14 @@ export function useDecryptJob(): UseDecryptJobReturn {
 
   const isClientFlow = jobConfig?.sourceType === 'upload' && jobConfig?.destType === 'download'
   const progress = isClientFlow ? clientProgress : serverProgress
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      processingRef.current = false
+      pausedRef.current = false
+    }
+  }, [])
 
   // During retry, merge successful results with live client results
   const liveResults = isRetryingRef.current && isClientProcessing
@@ -200,62 +210,134 @@ export function useDecryptJob(): UseDecryptJobReturn {
         } as FileResult))
       : results
 
+  // Number of parallel workers for processing
+  const PARALLEL_WORKERS = 3
+
   /**
-   * Poll server job status
+   * Single worker that processes files in batches
    */
-  const pollJobStatus = useCallback(async (jobId: string) => {
-    pollingRef.current = true
+  const processWorker = useCallback(async (
+    jobId: string,
+    key: string,
+    workerId: number,
+    onBatchComplete: (response: ProcessNextResponse) => void
+  ): Promise<void> => {
+    while (processingRef.current) {
+      // Check if paused
+      if (pausedRef.current) {
+        await new Promise(r => setTimeout(r, 500))
+        continue
+      }
 
-    while (pollingRef.current) {
       try {
-        const job = await api.get<any>(`/api/jobs/${jobId}`)
+        const response = await api.post<ProcessNextResponse>(
+          `/api/jobs/${jobId}/process-next`,
+          { key }
+        )
 
-        setServerProgress(prev => ({
-          totalFiles: job.totalFiles,
-          processedFiles: job.processedFiles,
-          currentFile: job.currentFile,
-          overallProgress: job.totalFiles > 0
-            ? Math.round((job.processedFiles / job.totalFiles) * 100)
-            : 0,
-          status: job.status,
-          startedAt: prev.startedAt
-        }))
+        onBatchComplete(response)
 
-        // Update results during processing for live log
-        if (job.results && job.results.length > 0) {
-          setResults(job.results)
-        }
-
-        if (job.status === 'completed') {
-          setResults(job.results)
-          setStatus('completed')
-          pollingRef.current = false
-          break
-        } else if (job.status === 'failed') {
-          setResults(job.results || [])
-          setStatus('failed')
-          if (job.error) {
-            setError(job.error)
-          }
-          pollingRef.current = false
+        // Check if this worker is done (no more files to claim)
+        if (response.done) {
           break
         }
 
-        // Wait before next poll
-        await new Promise(r => setTimeout(r, 1000))
+        // Check for job-level error
+        if (response.error) {
+          throw new ApiError(response.error, 401)
+        }
+
+        // Small stagger between requests from same worker
+        await new Promise(r => setTimeout(r, 50))
+
       } catch (err) {
-        console.error('Poll error:', err)
-        pollingRef.current = false
-        setStatus('failed')
-        if (err instanceof ApiError) {
-          setError(err.message)
-        } else {
-          setError('Failed to check job status. Please try again.')
-        }
-        break
+        // Re-throw to be handled by parent
+        throw err
       }
     }
   }, [])
+
+  /**
+   * Process files using parallel workers (client-driven processing)
+   * Each call to /process-next gets a fresh JWT from the browser session
+   */
+  const processFiles = useCallback(async (jobId: string, key: string) => {
+    processingRef.current = true
+    keyRef.current = key
+
+    // Callback to aggregate results from all workers
+    const onBatchComplete = (response: ProcessNextResponse) => {
+      // Update progress
+      setServerProgress(prev => ({
+        totalFiles: response.totalFiles,
+        processedFiles: response.processedFiles,
+        overallProgress: response.totalFiles > 0
+          ? Math.round((response.processedFiles / response.totalFiles) * 100)
+          : 0,
+        status: response.done ? 'completed' : 'processing',
+        startedAt: prev.startedAt
+      }))
+
+      // Update results: add processing files and completed batch results
+      setResults(prev => {
+        let updated = [...prev]
+
+        // Add files currently being processed (from any worker)
+        if (response.processingFiles && response.processingFiles.length > 0) {
+          for (const filename of response.processingFiles) {
+            const exists = updated.some(r => r.filename === filename)
+            if (!exists) {
+              updated.push({ filename, status: 'processing' })
+            }
+          }
+        }
+
+        // Update with completed batch results
+        if (response.batchResults && response.batchResults.length > 0) {
+          for (const result of response.batchResults) {
+            const idx = updated.findIndex(r => r.filename === result.filename)
+            if (idx >= 0) {
+              updated[idx] = result
+            } else {
+              updated.push(result)
+            }
+          }
+        }
+
+        return updated
+      })
+    }
+
+    try {
+      // Launch parallel workers
+      const workers = Array.from({ length: PARALLEL_WORKERS }, (_, i) =>
+        processWorker(jobId, key, i, onBatchComplete)
+      )
+
+      // Wait for all workers to complete
+      await Promise.all(workers)
+
+      // All workers done
+      if (processingRef.current) {
+        setStatus('completed')
+        processingRef.current = false
+      }
+
+    } catch (err) {
+      console.error('Process error:', err)
+      processingRef.current = false
+
+      if (err instanceof ApiError) {
+        setError(err.message)
+        if (err.status === 401) {
+          setError('Google Drive authentication expired. Please refresh the page to continue.')
+        }
+      } else {
+        setError('Failed to process files. Please try again.')
+      }
+      setStatus('failed')
+    }
+  }, [processWorker])
 
   /**
    * Start a new decryption job
@@ -292,7 +374,7 @@ export function useDecryptJob(): UseDecryptJobReturn {
         }
       }
     } else {
-      // Server-side flow - create job and poll for status
+      // Server-side flow - create job and drive processing from client
       try {
         const { jobId } = await api.post<{ jobId: string }>('/api/jobs', {
           sourceType: config.sourceType,
@@ -308,7 +390,9 @@ export function useDecryptJob(): UseDecryptJobReturn {
         const startTime = new Date().toISOString()
         setServerStartedAt(startTime)
         setServerProgress(prev => ({ ...prev, startedAt: startTime }))
-        pollJobStatus(jobId)
+
+        // Start client-driven processing (each request gets fresh JWT)
+        processFiles(jobId, config.key)
       } catch (err) {
         console.error('Failed to start job:', err)
         setStatus('failed')
@@ -321,7 +405,7 @@ export function useDecryptJob(): UseDecryptJobReturn {
         }
       }
     }
-  }, [decryptFiles, pollJobStatus])
+  }, [decryptFiles, processFiles])
 
   /**
    * Restart job with [decrypted] prefix mode (after folder creation fails)
@@ -388,7 +472,7 @@ export function useDecryptJob(): UseDecryptJobReturn {
       setResults(newResults)
       setStatus('completed')
     } else if (serverJobId) {
-      // Server-side retry
+      // Server-side retry - create new job and process from client
       const response = await fetch(`/api/jobs/${serverJobId}/retry`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -398,16 +482,18 @@ export function useDecryptJob(): UseDecryptJobReturn {
       if (response.ok) {
         const { jobId } = await response.json()
         setServerJobId(jobId)
-        pollJobStatus(jobId)
+        // Start client-driven processing for the new job
+        processFiles(jobId, jobConfig.key)
       }
     }
-  }, [jobConfig, results, isClientFlow, decryptFiles, serverJobId, pollJobStatus])
+  }, [jobConfig, results, isClientFlow, decryptFiles, serverJobId, processFiles])
 
   /**
    * Cancel current job
    */
   const cancel = useCallback(() => {
-    pollingRef.current = false
+    processingRef.current = false
+    pausedRef.current = false
     if (isClientFlow) {
       cancelClient()
     }
@@ -420,15 +506,12 @@ export function useDecryptJob(): UseDecryptJobReturn {
   const pause = useCallback(async () => {
     if (isClientFlow) {
       pauseClient()
-    } else if (serverJobId) {
-      try {
-        await api.post(`/api/jobs/${serverJobId}/pause`, {})
-        setServerProgress(prev => ({ ...prev, status: 'paused' }))
-      } catch (err) {
-        console.error('Failed to pause job:', err)
-      }
+    } else {
+      // For server flow, pause happens client-side (processing loop checks pausedRef)
+      pausedRef.current = true
+      setServerProgress(prev => ({ ...prev, status: 'paused' }))
     }
-  }, [isClientFlow, pauseClient, serverJobId])
+  }, [isClientFlow, pauseClient])
 
   /**
    * Resume paused job
@@ -436,23 +519,23 @@ export function useDecryptJob(): UseDecryptJobReturn {
   const resume = useCallback(async () => {
     if (isClientFlow) {
       resumeClient()
-    } else if (serverJobId) {
-      try {
-        await api.post(`/api/jobs/${serverJobId}/resume`, {})
-        setServerProgress(prev => ({ ...prev, status: 'processing' }))
-      } catch (err) {
-        console.error('Failed to resume job:', err)
-      }
+    } else {
+      // For server flow, resume client-side processing
+      pausedRef.current = false
+      setServerProgress(prev => ({ ...prev, status: 'processing' }))
     }
-  }, [isClientFlow, resumeClient, serverJobId])
+  }, [isClientFlow, resumeClient])
 
   /**
    * Reset to initial state
    */
   const reset = useCallback(() => {
-    pollingRef.current = false
+    processingRef.current = false
+    pausedRef.current = false
+    keyRef.current = ''
     setStatus('idle')
     setResults([])
+    setError(null)
     setJobConfig(null)
     setServerJobId(null)
     setServerStartedAt(null)
@@ -532,7 +615,7 @@ export function useDecryptJob(): UseDecryptJobReturn {
     cancel,
     pause,
     resume,
-    isPaused: isClientFlow ? isClientPaused : serverProgress.status === 'paused',
+    isPaused: isClientFlow ? isClientPaused : pausedRef.current,
     reset,
     downloadFile,
     downloadAll,

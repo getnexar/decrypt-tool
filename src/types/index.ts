@@ -122,6 +122,12 @@ export interface Job {
   /** Name of file currently being processed */
   currentFile?: string
 
+  /** List of files to process (for GDrive jobs) */
+  files?: GDriveFile[]
+
+  /** Resolved destination folder ID (for GDrive output) */
+  resolvedDestFolderId?: string
+
   /** Individual file results */
   results: FileResult[]
 
@@ -274,6 +280,41 @@ export interface JobStatusResponse extends Job {}
 export interface RetryRequest {
   /** Specific filenames to retry, or undefined to retry all failed files */
   files?: string[]
+}
+
+/**
+ * Request to process next batch of files
+ * POST /api/jobs/{jobId}/process-next
+ */
+export interface ProcessNextRequest {
+  /** 32-character hexadecimal decryption key */
+  key: string
+}
+
+/**
+ * Response from processing next batch
+ */
+export interface ProcessNextResponse {
+  /** Whether all files have been processed */
+  done: boolean
+
+  /** Number of files processed in this batch */
+  processedInBatch: number
+
+  /** Total files processed so far */
+  processedFiles: number
+
+  /** Total files in job */
+  totalFiles: number
+
+  /** Results from this batch */
+  batchResults: FileResult[]
+
+  /** Files currently being processed (for live log display) */
+  processingFiles?: string[]
+
+  /** Error if job failed (not individual file errors) */
+  error?: string
 }
 
 // ============================================================================

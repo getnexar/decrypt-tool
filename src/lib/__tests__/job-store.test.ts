@@ -13,9 +13,13 @@ import {
   getAllJobs,
   cleanupExpiredJobs,
   startCleanupScheduler,
-  stopCleanupScheduler
+  stopCleanupScheduler,
+  setJobFiles,
+  setJobResolvedDestFolder,
+  getPendingFiles,
+  claimFilesForProcessing
 } from '../job-store'
-import type { FileResult } from '@/types'
+import type { FileResult, GDriveFile } from '@/types'
 
 describe('Job Store', () => {
   beforeEach(() => {
@@ -596,6 +600,254 @@ describe('Job Store', () => {
       const updated = getJob(job.id)
       expect(updated?.processedFiles).toBe(0)
       expect(updated?.totalFiles).toBe(0)
+    })
+  })
+
+  describe('setJobFiles', () => {
+    it('should set files on a job and return true', () => {
+      const job = createJob({ sourceType: 'gdrive', destType: 'gdrive' })
+
+      const files: GDriveFile[] = [
+        { id: 'file1', name: 'video1.mp4', size: 1000, mimeType: 'video/mp4', path: 'video1.mp4' },
+        { id: 'file2', name: 'video2.mp4', size: 2000, mimeType: 'video/mp4', path: 'video2.mp4' }
+      ]
+
+      const result = setJobFiles(job.id, files)
+
+      expect(result).toBe(true)
+      const updated = getJob(job.id)
+      expect(updated?.files).toEqual(files)
+      expect(updated?.totalFiles).toBe(2)
+    })
+
+    it('should return false if files already set (race condition prevention)', () => {
+      const job = createJob({ sourceType: 'gdrive', destType: 'gdrive' })
+
+      const files1: GDriveFile[] = [
+        { id: 'file1', name: 'video1.mp4', size: 1000, mimeType: 'video/mp4', path: 'video1.mp4' }
+      ]
+      const files2: GDriveFile[] = [
+        { id: 'file2', name: 'video2.mp4', size: 2000, mimeType: 'video/mp4', path: 'video2.mp4' }
+      ]
+
+      const result1 = setJobFiles(job.id, files1)
+      const result2 = setJobFiles(job.id, files2)
+
+      expect(result1).toBe(true)
+      expect(result2).toBe(false) // Second call should fail
+
+      // Files should remain as first set
+      const updated = getJob(job.id)
+      expect(updated?.files).toEqual(files1)
+      expect(updated?.totalFiles).toBe(1)
+    })
+
+    it('should return false for non-existent job', () => {
+      const files: GDriveFile[] = [
+        { id: 'file1', name: 'video1.mp4', size: 1000, mimeType: 'video/mp4', path: 'video1.mp4' }
+      ]
+
+      const result = setJobFiles('non-existent-id', files)
+      expect(result).toBe(false)
+    })
+  })
+
+  describe('setJobResolvedDestFolder', () => {
+    it('should set resolved destination folder', () => {
+      const job = createJob({ sourceType: 'gdrive', destType: 'gdrive' })
+
+      setJobResolvedDestFolder(job.id, 'folder-abc-123')
+
+      const updated = getJob(job.id)
+      expect(updated?.resolvedDestFolderId).toBe('folder-abc-123')
+    })
+
+    it('should handle non-existent job gracefully', () => {
+      expect(() => {
+        setJobResolvedDestFolder('non-existent-id', 'folder-abc')
+      }).not.toThrow()
+    })
+  })
+
+  describe('getPendingFiles', () => {
+    it('should return all files when none processed', () => {
+      const job = createJob({ sourceType: 'gdrive', destType: 'gdrive' })
+
+      const files: GDriveFile[] = [
+        { id: 'file1', name: 'video1.mp4', size: 1000, mimeType: 'video/mp4', path: 'video1.mp4' },
+        { id: 'file2', name: 'video2.mp4', size: 2000, mimeType: 'video/mp4', path: 'video2.mp4' },
+        { id: 'file3', name: 'video3.mp4', size: 3000, mimeType: 'video/mp4', path: 'video3.mp4' }
+      ]
+
+      setJobFiles(job.id, files)
+
+      const pending = getPendingFiles(job.id)
+      expect(pending).toHaveLength(3)
+    })
+
+    it('should exclude successfully processed files', () => {
+      const job = createJob({ sourceType: 'gdrive', destType: 'gdrive' })
+
+      const files: GDriveFile[] = [
+        { id: 'file1', name: 'video1.mp4', size: 1000, mimeType: 'video/mp4', path: 'video1.mp4' },
+        { id: 'file2', name: 'video2.mp4', size: 2000, mimeType: 'video/mp4', path: 'video2.mp4' },
+        { id: 'file3', name: 'video3.mp4', size: 3000, mimeType: 'video/mp4', path: 'video3.mp4' }
+      ]
+
+      setJobFiles(job.id, files)
+      addFileResult(job.id, { filename: 'video1.mp4', status: 'success' })
+
+      const pending = getPendingFiles(job.id)
+      expect(pending).toHaveLength(2)
+      expect(pending.map(f => f.name)).toEqual(['video2.mp4', 'video3.mp4'])
+    })
+
+    it('should exclude failed files', () => {
+      const job = createJob({ sourceType: 'gdrive', destType: 'gdrive' })
+
+      const files: GDriveFile[] = [
+        { id: 'file1', name: 'video1.mp4', size: 1000, mimeType: 'video/mp4', path: 'video1.mp4' },
+        { id: 'file2', name: 'video2.mp4', size: 2000, mimeType: 'video/mp4', path: 'video2.mp4' }
+      ]
+
+      setJobFiles(job.id, files)
+      addFileResult(job.id, { filename: 'video1.mp4', status: 'failed', error: 'Some error' })
+
+      const pending = getPendingFiles(job.id)
+      expect(pending).toHaveLength(1)
+      expect(pending[0].name).toBe('video2.mp4')
+    })
+
+    it('should exclude files currently processing', () => {
+      const job = createJob({ sourceType: 'gdrive', destType: 'gdrive' })
+
+      const files: GDriveFile[] = [
+        { id: 'file1', name: 'video1.mp4', size: 1000, mimeType: 'video/mp4', path: 'video1.mp4' },
+        { id: 'file2', name: 'video2.mp4', size: 2000, mimeType: 'video/mp4', path: 'video2.mp4' }
+      ]
+
+      setJobFiles(job.id, files)
+      addFileResult(job.id, { filename: 'video1.mp4', status: 'processing' })
+
+      const pending = getPendingFiles(job.id)
+      expect(pending).toHaveLength(1)
+      expect(pending[0].name).toBe('video2.mp4')
+    })
+
+    it('should return empty array for non-existent job', () => {
+      const pending = getPendingFiles('non-existent-id')
+      expect(pending).toEqual([])
+    })
+
+    it('should return empty array for job without files', () => {
+      const job = createJob({ sourceType: 'gdrive', destType: 'gdrive' })
+
+      const pending = getPendingFiles(job.id)
+      expect(pending).toEqual([])
+    })
+  })
+
+  describe('claimFilesForProcessing', () => {
+    it('should claim specified number of files', () => {
+      const job = createJob({ sourceType: 'gdrive', destType: 'gdrive' })
+
+      const files: GDriveFile[] = [
+        { id: 'file1', name: 'video1.mp4', size: 1000, mimeType: 'video/mp4', path: 'video1.mp4' },
+        { id: 'file2', name: 'video2.mp4', size: 2000, mimeType: 'video/mp4', path: 'video2.mp4' },
+        { id: 'file3', name: 'video3.mp4', size: 3000, mimeType: 'video/mp4', path: 'video3.mp4' },
+        { id: 'file4', name: 'video4.mp4', size: 4000, mimeType: 'video/mp4', path: 'video4.mp4' }
+      ]
+
+      setJobFiles(job.id, files)
+
+      const claimed = claimFilesForProcessing(job.id, 2)
+      expect(claimed).toHaveLength(2)
+      expect(claimed.map(f => f.name)).toEqual(['video1.mp4', 'video2.mp4'])
+
+      // Verify they are marked as processing
+      const updated = getJob(job.id)
+      expect(updated?.results).toHaveLength(2)
+      expect(updated?.results[0].status).toBe('processing')
+      expect(updated?.results[1].status).toBe('processing')
+    })
+
+    it('should not claim already claimed files', () => {
+      const job = createJob({ sourceType: 'gdrive', destType: 'gdrive' })
+
+      const files: GDriveFile[] = [
+        { id: 'file1', name: 'video1.mp4', size: 1000, mimeType: 'video/mp4', path: 'video1.mp4' },
+        { id: 'file2', name: 'video2.mp4', size: 2000, mimeType: 'video/mp4', path: 'video2.mp4' },
+        { id: 'file3', name: 'video3.mp4', size: 3000, mimeType: 'video/mp4', path: 'video3.mp4' }
+      ]
+
+      setJobFiles(job.id, files)
+
+      // First claim
+      const claimed1 = claimFilesForProcessing(job.id, 2)
+      expect(claimed1).toHaveLength(2)
+
+      // Second claim should get remaining file
+      const claimed2 = claimFilesForProcessing(job.id, 2)
+      expect(claimed2).toHaveLength(1)
+      expect(claimed2[0].name).toBe('video3.mp4')
+
+      // Third claim should get nothing
+      const claimed3 = claimFilesForProcessing(job.id, 2)
+      expect(claimed3).toHaveLength(0)
+    })
+
+    it('should support parallel claiming (simulated)', () => {
+      const job = createJob({ sourceType: 'gdrive', destType: 'gdrive' })
+
+      const files: GDriveFile[] = [
+        { id: 'file1', name: 'video1.mp4', size: 1000, mimeType: 'video/mp4', path: 'video1.mp4' },
+        { id: 'file2', name: 'video2.mp4', size: 2000, mimeType: 'video/mp4', path: 'video2.mp4' },
+        { id: 'file3', name: 'video3.mp4', size: 3000, mimeType: 'video/mp4', path: 'video3.mp4' },
+        { id: 'file4', name: 'video4.mp4', size: 4000, mimeType: 'video/mp4', path: 'video4.mp4' },
+        { id: 'file5', name: 'video5.mp4', size: 5000, mimeType: 'video/mp4', path: 'video5.mp4' },
+        { id: 'file6', name: 'video6.mp4', size: 6000, mimeType: 'video/mp4', path: 'video6.mp4' }
+      ]
+
+      setJobFiles(job.id, files)
+
+      // Simulate 3 parallel workers each claiming 2 files
+      const worker1 = claimFilesForProcessing(job.id, 2)
+      const worker2 = claimFilesForProcessing(job.id, 2)
+      const worker3 = claimFilesForProcessing(job.id, 2)
+
+      // Each worker should get different files
+      expect(worker1).toHaveLength(2)
+      expect(worker2).toHaveLength(2)
+      expect(worker3).toHaveLength(2)
+
+      const allClaimed = [...worker1, ...worker2, ...worker3].map(f => f.name)
+      const uniqueClaimed = new Set(allClaimed)
+      expect(uniqueClaimed.size).toBe(6) // All 6 files claimed, no duplicates
+    })
+
+    it('should return empty array for non-existent job', () => {
+      const claimed = claimFilesForProcessing('non-existent-id', 3)
+      expect(claimed).toEqual([])
+    })
+
+    it('should return empty array when no files to claim', () => {
+      const job = createJob({ sourceType: 'gdrive', destType: 'gdrive' })
+
+      const claimed = claimFilesForProcessing(job.id, 3)
+      expect(claimed).toEqual([])
+    })
+
+    it('should claim fewer files if not enough available', () => {
+      const job = createJob({ sourceType: 'gdrive', destType: 'gdrive' })
+
+      const files: GDriveFile[] = [
+        { id: 'file1', name: 'video1.mp4', size: 1000, mimeType: 'video/mp4', path: 'video1.mp4' }
+      ]
+
+      setJobFiles(job.id, files)
+
+      const claimed = claimFilesForProcessing(job.id, 5)
+      expect(claimed).toHaveLength(1)
     })
   })
 })

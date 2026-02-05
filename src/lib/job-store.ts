@@ -1,7 +1,7 @@
 // src/lib/job-store.ts
 
 import { v4 as uuidv4 } from 'uuid'
-import type { Job, JobStatus, FileResult, SourceType, DestType } from '@/types'
+import type { Job, JobStatus, FileResult, SourceType, DestType, GDriveFile } from '@/types'
 
 // In-memory store
 // Use globalThis to persist across hot reloads in development
@@ -144,6 +144,73 @@ export function updateFileResult(jobId: string, filename: string, update: Partia
 export function getJobResults(jobId: string): FileResult[] {
   const job = jobs.get(jobId)
   return job?.results ?? []
+}
+
+export function setJobFiles(jobId: string, files: GDriveFile[]): boolean {
+  const job = jobs.get(jobId)
+  if (!job) return false
+
+  // Prevent race condition: only set files if not already set
+  if (job.files && job.files.length > 0) {
+    return false // Already initialized by another worker
+  }
+
+  job.files = files
+  job.totalFiles = files.length
+  job.updatedAt = new Date().toISOString()
+  return true
+}
+
+export function setJobResolvedDestFolder(jobId: string, folderId: string): void {
+  const job = jobs.get(jobId)
+  if (!job) return
+
+  job.resolvedDestFolderId = folderId
+  job.updatedAt = new Date().toISOString()
+}
+
+export function getPendingFiles(jobId: string): GDriveFile[] {
+  const job = jobs.get(jobId)
+  if (!job || !job.files) return []
+
+  // Get filenames that have already been processed or are being processed
+  const processedFilenames = new Set(
+    job.results
+      .filter(r => r.status === 'success' || r.status === 'failed' || r.status === 'processing')
+      .map(r => r.filename)
+  )
+
+  // Return files not yet processed
+  return job.files.filter(f => !processedFilenames.has(f.name))
+}
+
+/**
+ * Claim files for processing (atomic operation to prevent duplicate processing)
+ * Returns the claimed files, or empty array if no files available
+ */
+export function claimFilesForProcessing(jobId: string, count: number): GDriveFile[] {
+  const job = jobs.get(jobId)
+  if (!job || !job.files) return []
+
+  // Get filenames that have already been claimed or processed
+  const takenFilenames = new Set(
+    job.results.map(r => r.filename)
+  )
+
+  // Find unclaimed files
+  const availableFiles = job.files.filter(f => !takenFilenames.has(f.name))
+  const filesToClaim = availableFiles.slice(0, count)
+
+  // Mark them as processing (claim them)
+  for (const file of filesToClaim) {
+    job.results.push({
+      filename: file.name,
+      status: 'processing'
+    })
+  }
+
+  job.updatedAt = new Date().toISOString()
+  return filesToClaim
 }
 
 export function deleteJob(jobId: string): boolean {
