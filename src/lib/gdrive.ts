@@ -702,6 +702,38 @@ export async function folderExists(
 }
 
 /**
+ * Check if a file with the given name exists in a folder
+ *
+ * @param folderId - Google Drive folder ID to check
+ * @param filename - Name of the file to look for
+ * @param config - API configuration with access token
+ * @returns true if file exists, false otherwise
+ */
+export async function fileExistsInFolder(
+  folderId: string,
+  filename: string,
+  config: GDriveConfig
+): Promise<boolean> {
+  try {
+    const query = `'${folderId}' in parents and name='${filename.replace(/'/g, "\\'")}' and trashed=false`
+    const params = new URLSearchParams({
+      q: query,
+      fields: 'files(id)',
+      pageSize: '1'
+    })
+
+    const response = await driveRequest<DriveListResponse>(
+      `/files?${params}`,
+      config
+    )
+
+    return response.files.length > 0
+  } catch {
+    return false
+  }
+}
+
+/**
  * Get or create a "decrypted" subfolder
  *
  * This is used when the user selects "Same folder" option for destination.

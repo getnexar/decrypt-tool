@@ -16,6 +16,7 @@ import {
   downloadFileAsBuffer,
   uploadFile,
   getOrCreateDecryptedFolder,
+  fileExistsInFolder,
   GDriveAuthError
 } from '@/lib/gdrive'
 import { generateXorPad, decryptChunk, validateMp4Header } from '@/lib/crypto'
@@ -255,6 +256,23 @@ export async function POST(
         if (job.destType === 'gdrive' && destFolderId) {
           // Upload to GDrive
           const uploadFilename = useDecryptedPrefix ? `[decrypted] ${safeFilename}` : safeFilename
+
+          // Check if file already exists (prevents duplicates from multiple jobs)
+          const alreadyExists = await fileExistsInFolder(destFolderId, uploadFilename, config)
+          if (alreadyExists) {
+            console.log(`[process-next] File ${uploadFilename} already exists in destination, skipping upload`)
+            const result = {
+              filename: file.name,
+              status: 'success' as const,
+              outputPath: `gdrive://existing`,
+              size: decryptedBuffer.length,
+              processedAt: new Date().toISOString()
+            }
+            updateFileResult(jobId, file.name, result)
+            batchResults.push(result)
+            continue
+          }
+
           console.log(`[process-next] Uploading ${uploadFilename} to folder ${destFolderId}...`)
           const newFileId = await uploadFile(
             destFolderId,

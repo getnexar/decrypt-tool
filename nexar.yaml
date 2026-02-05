@@ -10,7 +10,8 @@ resources:
   memory: "2Gi"
   cpu: "2"
   min_instances: 1
-  max_instances: 5
+  max_instances: 1
+  session_affinity: true
 sidecar:
   max_body_size: "100m"
 cost_center: "RD-ENG-GEN-0"
