@@ -17,7 +17,10 @@ import {
   setJobFiles,
   setJobResolvedDestFolder,
   getPendingFiles,
-  claimFilesForProcessing
+  claimFilesForProcessing,
+  pauseJob,
+  resumeJob,
+  isJobPaused
 } from '../job-store'
 import type { FileResult, GDriveFile } from '@/types'
 
@@ -115,6 +118,122 @@ describe('Job Store', () => {
       // Verify it was deleted
       const allJobs = getAllJobs()
       expect(allJobs.find(j => j.id === job.id)).toBeUndefined()
+    })
+  })
+
+  describe('pauseJob', () => {
+    it('should pause a processing job', () => {
+      const job = createJob({ sourceType: 'upload', destType: 'download' })
+      updateJobStatus(job.id, 'processing')
+
+      const result = pauseJob(job.id)
+
+      expect(result).toBe(true)
+      const updated = getJob(job.id)
+      expect(updated?.status).toBe('paused')
+      expect(updated?.isPaused).toBe(true)
+    })
+
+    it('should return false for non-processing job', () => {
+      const job = createJob({ sourceType: 'upload', destType: 'download' })
+      // Job is in 'pending' status
+
+      const result = pauseJob(job.id)
+
+      expect(result).toBe(false)
+      const updated = getJob(job.id)
+      expect(updated?.status).toBe('pending')
+      expect(updated?.isPaused).toBeFalsy()
+    })
+
+    it('should return false for non-existent job', () => {
+      const result = pauseJob('non-existent-id')
+      expect(result).toBe(false)
+    })
+
+    it('should update updatedAt timestamp', () => {
+      const job = createJob({ sourceType: 'upload', destType: 'download' })
+      updateJobStatus(job.id, 'processing')
+      const beforePause = getJob(job.id)?.updatedAt
+
+      vi.useFakeTimers()
+      vi.advanceTimersByTime(1000)
+
+      pauseJob(job.id)
+
+      vi.useRealTimers()
+
+      const updated = getJob(job.id)
+      expect(updated?.updatedAt).not.toBe(beforePause)
+    })
+  })
+
+  describe('resumeJob', () => {
+    it('should resume a paused job', () => {
+      const job = createJob({ sourceType: 'upload', destType: 'download' })
+      updateJobStatus(job.id, 'processing')
+      pauseJob(job.id)
+
+      const result = resumeJob(job.id)
+
+      expect(result).toBe(true)
+      const updated = getJob(job.id)
+      expect(updated?.status).toBe('processing')
+      expect(updated?.isPaused).toBe(false)
+    })
+
+    it('should return false for non-paused job', () => {
+      const job = createJob({ sourceType: 'upload', destType: 'download' })
+      updateJobStatus(job.id, 'processing')
+
+      const result = resumeJob(job.id)
+
+      expect(result).toBe(false)
+      const updated = getJob(job.id)
+      expect(updated?.status).toBe('processing')
+    })
+
+    it('should return false for non-existent job', () => {
+      const result = resumeJob('non-existent-id')
+      expect(result).toBe(false)
+    })
+
+    it('should update updatedAt timestamp', () => {
+      const job = createJob({ sourceType: 'upload', destType: 'download' })
+      updateJobStatus(job.id, 'processing')
+      pauseJob(job.id)
+      const beforeResume = getJob(job.id)?.updatedAt
+
+      vi.useFakeTimers()
+      vi.advanceTimersByTime(1000)
+
+      resumeJob(job.id)
+
+      vi.useRealTimers()
+
+      const updated = getJob(job.id)
+      expect(updated?.updatedAt).not.toBe(beforeResume)
+    })
+  })
+
+  describe('isJobPaused', () => {
+    it('should return true for paused job', () => {
+      const job = createJob({ sourceType: 'upload', destType: 'download' })
+      updateJobStatus(job.id, 'processing')
+      pauseJob(job.id)
+
+      expect(isJobPaused(job.id)).toBe(true)
+    })
+
+    it('should return false for non-paused job', () => {
+      const job = createJob({ sourceType: 'upload', destType: 'download' })
+      updateJobStatus(job.id, 'processing')
+
+      expect(isJobPaused(job.id)).toBe(false)
+    })
+
+    it('should return false for non-existent job', () => {
+      expect(isJobPaused('non-existent-id')).toBe(false)
     })
   })
 
@@ -281,6 +400,31 @@ describe('Job Store', () => {
       expect(() => {
         addFileResult('non-existent-id', result)
       }).not.toThrow()
+    })
+
+    it('should update existing file result instead of adding duplicate', () => {
+      const job = createJob({ sourceType: 'upload', destType: 'download' })
+
+      const result1: FileResult = {
+        filename: 'video1.mp4',
+        status: 'processing',
+        processedAt: new Date().toISOString()
+      }
+
+      const result2: FileResult = {
+        filename: 'video1.mp4',
+        status: 'success',
+        outputPath: '/output/video1.mp4',
+        processedAt: new Date().toISOString()
+      }
+
+      addFileResult(job.id, result1)
+      addFileResult(job.id, result2)
+
+      const updated = getJob(job.id)
+      expect(updated?.results).toHaveLength(1) // Should not duplicate
+      expect(updated?.results[0].status).toBe('success')
+      expect(updated?.results[0].outputPath).toBe('/output/video1.mp4')
     })
   })
 

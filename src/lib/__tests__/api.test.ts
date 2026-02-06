@@ -115,6 +115,82 @@ describe('api', () => {
     })
   })
 
+  describe('api.put', () => {
+    it('should make PUT request with JSON body', async () => {
+      const mockResponse = new Response('{"updated": true}', { status: 200 })
+      ;(global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue(mockResponse)
+
+      const result = await api.put<{ updated: boolean }>('https://example.com/api/123', {
+        name: 'updated'
+      })
+
+      expect(result).toEqual({ updated: true })
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://example.com/api/123',
+        expect.objectContaining({
+          method: 'PUT',
+          headers: expect.objectContaining({
+            'Content-Type': 'application/json'
+          }),
+          body: JSON.stringify({ name: 'updated' })
+        })
+      )
+    })
+
+    it('should merge custom headers', async () => {
+      const mockResponse = new Response('{"updated": true}', { status: 200 })
+      ;(global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue(mockResponse)
+
+      await api.put('https://example.com/api/123', { data: 'test' }, {
+        headers: { 'X-Custom-Header': 'custom-value' }
+      })
+
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://example.com/api/123',
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            'Content-Type': 'application/json',
+            'X-Custom-Header': 'custom-value'
+          })
+        })
+      )
+    })
+  })
+
+  describe('api.delete', () => {
+    it('should make DELETE request', async () => {
+      const mockResponse = new Response('{"deleted": true}', { status: 200 })
+      ;(global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue(mockResponse)
+
+      const result = await api.delete<{ deleted: boolean }>('https://example.com/api/123')
+
+      expect(result).toEqual({ deleted: true })
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://example.com/api/123',
+        expect.objectContaining({
+          method: 'DELETE'
+        })
+      )
+    })
+
+    it('should pass through options', async () => {
+      const mockResponse = new Response('{"deleted": true}', { status: 200 })
+      ;(global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue(mockResponse)
+
+      await api.delete('https://example.com/api/123', {
+        headers: { 'Authorization': 'Bearer token' }
+      })
+
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://example.com/api/123',
+        expect.objectContaining({
+          method: 'DELETE',
+          headers: { 'Authorization': 'Bearer token' }
+        })
+      )
+    })
+  })
+
   describe('ApiError', () => {
     it('should contain status and code', () => {
       const error = new ApiError('Bad request', 400, 'INVALID_INPUT')

@@ -10,6 +10,7 @@ import {
   validateMp4File,
   validateFileSize,
   validateTotalSize,
+  formatFileSize,
   VALIDATION_CONSTANTS,
 } from '../validation';
 
@@ -524,5 +525,64 @@ describe('VALIDATION_CONSTANTS', () => {
 
   it('should export MAX_FILENAME_LENGTH as 255', () => {
     expect(VALIDATION_CONSTANTS.MAX_FILENAME_LENGTH).toBe(255);
+  });
+});
+
+describe('formatFileSize', () => {
+  describe('Happy path', () => {
+    it('should format bytes', () => {
+      expect(formatFileSize(500)).toBe('500 B');
+    });
+
+    it('should format kilobytes', () => {
+      expect(formatFileSize(1024)).toBe('1 KB');
+      expect(formatFileSize(1536)).toBe('1.5 KB');
+    });
+
+    it('should format megabytes', () => {
+      expect(formatFileSize(1024 * 1024)).toBe('1 MB');
+      expect(formatFileSize(1.5 * 1024 * 1024)).toBe('1.5 MB');
+    });
+
+    it('should format gigabytes', () => {
+      expect(formatFileSize(1024 * 1024 * 1024)).toBe('1 GB');
+      expect(formatFileSize(2.5 * 1024 * 1024 * 1024)).toBe('2.5 GB');
+    });
+  });
+
+  describe('Edge cases', () => {
+    it('should handle zero bytes', () => {
+      expect(formatFileSize(0)).toBe('0 B');
+    });
+
+    it('should handle exact power-of-two boundaries', () => {
+      expect(formatFileSize(1024)).toBe('1 KB');
+      expect(formatFileSize(1024 * 1024)).toBe('1 MB');
+      expect(formatFileSize(1024 * 1024 * 1024)).toBe('1 GB');
+    });
+
+    it('should round to one decimal place', () => {
+      expect(formatFileSize(1234)).toBe('1.2 KB');
+      expect(formatFileSize(1567890)).toBe('1.5 MB');
+    });
+  });
+});
+
+describe('validateMp4File error handling', () => {
+  it('should return false when arrayBuffer throws an error', async () => {
+    // Create a valid MP4 header file first
+    const mp4Header = new Uint8Array([0, 0, 0, 0, 0x66, 0x74, 0x79, 0x70]); // ftyp at bytes 4-7
+    const file = new File([mp4Header], 'test.mp4', { type: 'video/mp4' });
+
+    // Mock the slice method to return a blob that throws on arrayBuffer
+    const originalSlice = file.slice.bind(file);
+    file.slice = (...args: Parameters<typeof originalSlice>) => {
+      const blob = originalSlice(...args);
+      blob.arrayBuffer = () => Promise.reject(new Error('Read error'));
+      return blob;
+    };
+
+    const result = await validateMp4File(file);
+    expect(result).toBe(false);
   });
 });
