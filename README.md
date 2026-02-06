@@ -2,8 +2,8 @@
 
 A web application for decrypting encrypted Nexar dashcam videos using XOR cipher.
 
-**Version:** 0.5.3
-**Status:** Development (local mode works, production partially mitigated)
+**Version:** 0.5.4
+**Status:** Working (GDrive → GDrive flow tested)
 
 ## Features
 
@@ -19,7 +19,9 @@ A web application for decrypting encrypted Nexar dashcam videos using XOR cipher
 | Environment | Status | Notes |
 |-------------|--------|-------|
 | **Local Dev** | ✅ Working | Full functionality with personal GDrive token |
-| **NAP (Production)** | ⚠️ Mitigated | Timeout increased to 5min, job-loss still possible on instance restart |
+| **NAP (Production)** | ✅ Working | GDrive → GDrive tested; use "same folder with prefix" option |
+
+> **Note:** Only the Google Drive → Google Drive flow has been fully tested. Other source/destination combinations may have issues. Contributions welcome!
 
 ## Local Development Setup
 
@@ -83,17 +85,20 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 4. Click "Start Decryption"
 5. Monitor progress and download results
 
-## Known Issues (Production/NAP)
+## Known Limitations (Production/NAP)
 
-### 504 Timeout & Job Loss (Mitigated)
+### Folder Creation Not Supported
 
-**Problem:** Long-running decrypt operations could exceed Cloud Run's default 60-second timeout.
+The NAP workspace-proxy doesn't support creating new folders in Google Drive. When you select "Same folder → Create 'decrypted' subfolder", you'll see an error dialog with two options:
 
-**Mitigation Applied:** Timeout increased to 300s (5 minutes) via `nexar.yaml`.
+1. **Use prefix instead (Recommended):** Files saved to same folder with `[decrypted]` prefix
+2. **Select existing folder:** Choose a pre-existing destination folder
 
-**Remaining Risk:** Jobs are stored in-memory. If instance restarts (scaling, deployment, crash), job state is lost and users get 404 errors.
+### In-Memory Job Store
 
-**For full fix:** See [`docs/issues/504-timeout-job-loss.md`](docs/issues/504-timeout-job-loss.md) - Option B (client recovery) or Option C (Firestore persistence) would fully solve this.
+Jobs are stored in-memory. If the instance restarts (scaling, deployment, crash), job state is lost. This is rare with `min_instances: 1` but can happen.
+
+**For future improvements:** See [`docs/issues/504-timeout-job-loss.md`](docs/issues/504-timeout-job-loss.md)
 
 ## Architecture
 
