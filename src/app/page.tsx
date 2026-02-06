@@ -92,6 +92,24 @@ export default function Home() {
             </div>
           </div>
         )}
+
+        <footer className="pt-8 border-t border-border text-center text-xs text-muted-foreground space-y-2">
+          <p>
+            <strong>Note:</strong> Only Google Drive → Google Drive flow has been tested.
+            Other source/destination combinations may have issues.
+          </p>
+          <p>
+            Found a bug? Contributions welcome at{' '}
+            <a
+              href="https://github.com/getnexar/decrypt-tool"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary hover:underline"
+            >
+              github.com/getnexar/decrypt-tool
+            </a>
+          </p>
+        </footer>
       </div>
     </main>
   )
