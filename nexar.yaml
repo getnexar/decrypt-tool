@@ -12,6 +12,7 @@ resources:
   min_instances: 1
   max_instances: 1
   session_affinity: true
+  request_timeout: 300  # 5 minutes (default is 60s)
 sidecar:
   max_body_size: "100m"
 cost_center: "RD-ENG-GEN-0"

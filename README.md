@@ -2,8 +2,8 @@
 
 A web application for decrypting encrypted Nexar dashcam videos using XOR cipher.
 
-**Version:** 0.5.2
-**Status:** Development (local mode works, production deployment has known issues)
+**Version:** 0.5.3
+**Status:** Development (local mode works, production partially mitigated)
 
 ## Features
 
@@ -19,7 +19,7 @@ A web application for decrypting encrypted Nexar dashcam videos using XOR cipher
 | Environment | Status | Notes |
 |-------------|--------|-------|
 | **Local Dev** | ✅ Working | Full functionality with personal GDrive token |
-| **NAP (Production)** | ⚠️ Partial | Has timeout/job-loss issues - see Known Issues |
+| **NAP (Production)** | ⚠️ Mitigated | Timeout increased to 5min, job-loss still possible on instance restart |
 
 ## Local Development Setup
 
@@ -85,24 +85,15 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ## Known Issues (Production/NAP)
 
-The NAP deployment has issues that prevent reliable production use:
+### 504 Timeout & Job Loss (Mitigated)
 
-### 504 Timeout & Job Loss
+**Problem:** Long-running decrypt operations could exceed Cloud Run's default 60-second timeout.
 
-**Problem:** Long-running decrypt operations exceed Cloud Run's 60-second timeout, causing:
-- 504 Gateway Timeout errors
-- Instance restarts losing in-memory job state
-- "Job not found" (404) errors on retry
+**Mitigation Applied:** Timeout increased to 300s (5 minutes) via `nexar.yaml`.
 
-**Root Cause:** Jobs are stored in-memory (`src/lib/job-store.ts`). Cloud Run instances can restart after timeouts, losing all job state.
+**Remaining Risk:** Jobs are stored in-memory. If instance restarts (scaling, deployment, crash), job state is lost and users get 404 errors.
 
-**Documented Fix Options:** See [`docs/issues/504-timeout-job-loss.md`](docs/issues/504-timeout-job-loss.md)
-
-### To Complete Production Deployment
-
-1. Implement one of the fixes from the issue doc (recommended: Option B - smaller batches + client recovery)
-2. Or increase Cloud Run timeout as a temporary workaround
-3. Test with large folders (100+ files) to verify stability
+**For full fix:** See [`docs/issues/504-timeout-job-loss.md`](docs/issues/504-timeout-job-loss.md) - Option B (client recovery) or Option C (Firestore persistence) would fully solve this.
 
 ## Architecture
 

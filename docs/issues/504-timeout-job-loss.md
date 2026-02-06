@@ -1,6 +1,6 @@
 # Issue: 504 Timeout & Job Loss in Production
 
-**Status:** Open
+**Status:** Mitigated (Option A implemented)
 **Severity:** Medium
 **Date:** 2026-02-05
 
@@ -37,7 +37,7 @@ ApiError: Job not found
 
 ## Potential Fixes
 
-### Option A: Increase Timeout (Quick Fix)
+### Option A: Increase Timeout (Quick Fix) ✅ IMPLEMENTED
 
 Increase Cloud Run timeout from 60s to 300s.
 
@@ -50,7 +50,7 @@ Increase Cloud Run timeout from 60s to 300s.
 - Just delays the problem for very large jobs
 
 **Implementation:**
-- Update `nexar.yaml` or Cloud Run settings
+- ✅ Updated `nexar.yaml` with `request_timeout: 300`
 
 ---
 
