@@ -68,14 +68,18 @@
       "Bash(psql:*)",
       "Bash(mysql:*)",
       "Bash(sqlite3:*)",
-      "Bash(gh:*)"
+      "Bash(gh:*)",
+      "WebFetch(domain:fonts.googleapis.com)",
+      "WebFetch(domain:fonts.gstatic.com)",
+      "WebFetch(domain:registry.npmjs.org)",
+      "WebFetch(domain:storage.googleapis.com)",
+      "WebFetch(domain:auth.corp.nexars.ai)",
+      "Bash(nap logs:*)",
+      "Bash(nap search:*)",
+      "Bash(nap ask:*)",
+      "Bash(nap deploy:*)",
+      "Bash(nap diagnose:*)"
     ]
-  },
-  "amplify": {
-    "executionMode": {
-      "default": "collaborative",
-      "description": "Controls execution after planning. Collaborative keeps user in control while agents assist via @ mentions."
-    }
   },
   "hooks": {
     "SessionStart": [
@@ -99,6 +103,14 @@
     "command": "npx amplify status",
     "padding": 0
   },
+  "enabledPlugins": {
+    "superpowers@superpowers-marketplace": true,
+    "nexar@nexar-claude-agents": true,
+    "pr-review-team@nexar-claude-agents": true,
+    "feature-dev@claude-code-plugins": true,
+    "frontend-design@claude-code-plugins": true,
+    "ralph-wiggum@claude-code-plugins": true
+  },
   "extraKnownMarketplaces": {
     "nexar-claude-agents": {
       "source": {
@@ -119,12 +131,10 @@
       }
     }
   },
-  "enabledPlugins": {
-    "superpowers@superpowers-marketplace": true,
-    "nexar@nexar-claude-agents": true,
-    "pr-review-team@nexar-claude-agents": true,
-    "feature-dev@claude-code-plugins": true,
-    "frontend-design@claude-code-plugins": true,
-    "ralph-wiggum@claude-code-plugins": true
+  "amplify": {
+    "executionMode": {
+      "default": "collaborative",
+      "description": "Controls execution after planning. Collaborative keeps user in control while agents assist via @ mentions."
+    }
   }
 }

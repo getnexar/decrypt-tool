@@ -17,7 +17,8 @@ import {
   uploadFile,
   getOrCreateDecryptedFolder,
   fileExistsInFolder,
-  GDriveAuthError
+  GDriveAuthError,
+  FolderCreationError
 } from '@/lib/gdrive'
 import { generateXorPad, decryptChunk, validateMp4Header } from '@/lib/crypto'
 import { sanitizeFilename, validateHexKey } from '@/lib/validation'
@@ -131,8 +132,21 @@ export async function POST(
               destFolderId = job.sourcePath
               console.log(`[process-next] Using source folder with prefix: ${destFolderId}`)
             } else {
-              destFolderId = await getOrCreateDecryptedFolder(job.sourcePath, config)
-              console.log(`[process-next] Got/created decrypted folder: ${destFolderId}`)
+              try {
+                destFolderId = await getOrCreateDecryptedFolder(job.sourcePath, config)
+                console.log(`[process-next] Got/created decrypted folder: ${destFolderId}`)
+              } catch (error) {
+                if (error instanceof FolderCreationError) {
+                  // Folder creation not supported - return error to client
+                  console.log(`[process-next] Folder creation failed: ${error.message}`)
+                  updateJobStatus(jobId, 'failed')
+                  return NextResponse.json({
+                    error: error.message,
+                    code: 'FOLDER_CREATION_ERROR'
+                  }, { status: 400 })
+                }
+                throw error
+              }
             }
           } else if (job.destPath) {
             destFolderId = job.destPath
@@ -141,10 +155,16 @@ export async function POST(
             console.log(`[process-next] WARNING: No dest folder resolved! sameFolder=${job.sameFolder}, sourcePath=${job.sourcePath}, destPath=${job.destPath}`)
           }
 
-          if (destFolderId) {
-            setJobResolvedDestFolder(jobId, destFolderId)
-            console.log(`[process-next] Set resolved dest folder: ${destFolderId}`)
+          if (!destFolderId) {
+            updateJobStatus(jobId, 'failed')
+            return NextResponse.json({
+              error: 'No destination folder could be resolved',
+              code: 'NO_DEST_FOLDER'
+            }, { status: 400 })
           }
+
+          setJobResolvedDestFolder(jobId, destFolderId)
+          console.log(`[process-next] Set resolved dest folder: ${destFolderId}`)
         }
 
         // Return with file count, client will call again to start processing
@@ -225,6 +245,15 @@ export async function POST(
     const currentJob = getJob(jobId)
     const destFolderId = currentJob?.resolvedDestFolderId || job.resolvedDestFolderId
     const useDecryptedPrefix = currentJob?.useDecryptedPrefix || job.useDecryptedPrefix || false
+
+    // Fail early if gdrive destination but no folder resolved
+    if (job.destType === 'gdrive' && !destFolderId) {
+      console.log(`[process-next] ERROR: gdrive dest but no destFolderId resolved`)
+      return NextResponse.json({
+        error: 'Destination folder not resolved. The job may have failed to initialize.',
+        code: 'NO_DEST_FOLDER'
+      }, { status: 400 })
+    }
 
     for (const file of batch) {
       const safeFilename = sanitizeFilename(file.name)
