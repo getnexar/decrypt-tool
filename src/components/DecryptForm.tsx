@@ -18,12 +18,12 @@ interface DecryptFormProps {
 }
 
 export function DecryptForm({ onSubmit, isProcessing }: DecryptFormProps) {
-  const [sourceType, setSourceType] = useState<SourceType>('upload')
+  const [sourceType, setSourceType] = useState<SourceType>('gdrive')
   const [sourceFolder, setSourceFolder] = useState('')
   const [files, setFiles] = useState<File[]>([])
   const [key, setKey] = useState('')
   const [showKey, setShowKey] = useState(false)
-  const [destType, setDestType] = useState<DestType>('download')
+  const [destType, setDestType] = useState<DestType>('gdrive')
   const [destFolder, setDestFolder] = useState('')
   const [sameFolder, setSameFolder] = useState(true)
   const [showExistingFolderDialog, setShowExistingFolderDialog] = useState(false)

@@ -12,8 +12,9 @@
  * - Local dev: Uses direct Google Drive API with OAuth access token
  */
 
-import { Agent } from 'undici'
+import { Agent, fetch as undiciFetch } from 'undici'
 import type { GDriveFile } from '@/types'
+import { logDebug, logWarn } from './logger'
 
 // ============================================================================
 // Environment Detection
@@ -27,8 +28,16 @@ const DRIVE_API_BASE = 'https://www.googleapis.com/drive/v3'
 const UPLOAD_API_BASE = 'https://www.googleapis.com/upload/drive/v3'
 const WORKSPACE_PROXY_URL = process.env.WORKSPACE_PROXY_URL || 'https://workspace-proxy.internal'
 
-// Required for internal workspace-proxy certificate (NAP mode only)
-const insecureAgent = new Agent({ connect: { rejectUnauthorized: false } })
+// TLS certificate validation configuration
+// In production (NAP), workspace-proxy uses self-signed certificates.
+// NODE_TLS_REJECT_UNAUTHORIZED=0 is set via:
+//   1. package.json start script (shell-level, before Node boots)
+//   2. src/instrumentation.ts (Next.js server startup hook)
+// The undici Agent dispatcher does NOT work with Next.js 16 Turbopack.
+const isInternalProxy = !!process.env.WORKSPACE_PROXY_URL?.includes('.internal')
+const internalAgent = new Agent({
+  connect: { rejectUnauthorized: !isInternalProxy }
+})
 
 // ============================================================================
 // Error Classes
@@ -128,15 +137,16 @@ async function driveRequest<T>(
   }
 
   // NAP mode: workspace-proxy with JWT
-  const response = await fetch(`${WORKSPACE_PROXY_URL}/drive${endpoint}`, {
-    ...options,
+  // Use undici's fetch directly - Next.js 16 patches global fetch and ignores dispatcher
+  const response = await undiciFetch(`${WORKSPACE_PROXY_URL}/drive${endpoint}`, {
+    method: options.method || 'GET',
     headers: {
       'X-Nexar-Platform-JWT': config.jwt || '',
       'Content-Type': 'application/json',
-      ...options.headers
+      ...(options.headers as Record<string, string>)
     },
-    // @ts-expect-error - dispatcher is valid for undici but not in RequestInit types
-    dispatcher: insecureAgent
+    body: options.body as string | undefined,
+    dispatcher: internalAgent
   })
 
   if (!response.ok) {
@@ -144,7 +154,7 @@ async function driveRequest<T>(
     handleApiError(response.status, error)
   }
 
-  return response.json()
+  return response.json() as T
 }
 
 // ============================================================================
@@ -187,7 +197,7 @@ export async function listMp4Files(
       if (file.mimeType === 'application/vnd.google-apps.folder') {
         // Skip "decrypted" folder to avoid re-processing already decrypted files
         if (file.name.toLowerCase() === 'decrypted') {
-          console.log(`[gdrive] Skipping "decrypted" folder at ${filePath}`)
+          logDebug('gdrive', ` Skipping "decrypted" folder at ${filePath}`)
           continue
         }
         // Recurse into subfolder
@@ -238,16 +248,15 @@ export async function downloadFile(
     })
   } else {
     // NAP mode: workspace-proxy
-    response = await fetch(
+    response = await undiciFetch(
       `${WORKSPACE_PROXY_URL}/drive/files/${fileId}/content`,
       {
         headers: {
           'X-Nexar-Platform-JWT': config.jwt || ''
         },
-        // @ts-expect-error - dispatcher is valid for undici but not in RequestInit types
-        dispatcher: insecureAgent
+        dispatcher: internalAgent
       }
-    )
+    ) as unknown as Response
   }
 
   if (!response.ok) {
@@ -259,7 +268,7 @@ export async function downloadFile(
     throw new Error('No response body')
   }
 
-  return response.body
+  return response.body as ReadableStream<Uint8Array>
 }
 
 /**
@@ -276,7 +285,7 @@ export async function downloadFileAsBuffer(
   config: GDriveConfig
 ): Promise<Buffer> {
   const token = config.accessToken || process.env.GDRIVE_ACCESS_TOKEN
-  console.log(`[gdrive] Downloading file ${fileId}...`)
+  logDebug('gdrive', ` Downloading file ${fileId}...`)
 
   let response: Response
   if (isLocalDev && token) {
@@ -286,19 +295,18 @@ export async function downloadFileAsBuffer(
         'Authorization': `Bearer ${token}`
       }
     })
-    console.log(`[gdrive] Download response: status=${response.status}`)
+    logDebug('gdrive', ` Download response: status=${response.status}`)
   } else {
     // NAP mode: workspace-proxy
-    response = await fetch(
+    response = await undiciFetch(
       `${WORKSPACE_PROXY_URL}/drive/files/${fileId}/content`,
       {
         headers: {
           'X-Nexar-Platform-JWT': config.jwt || ''
         },
-        // @ts-expect-error - dispatcher is valid for undici but not in RequestInit types
-        dispatcher: insecureAgent
+        dispatcher: internalAgent
       }
-    )
+    ) as unknown as Response
   }
 
   if (!response.ok) {
@@ -355,7 +363,7 @@ export async function uploadFile(
 
   // Use resumable upload for large files (bypasses Envoy buffer limit in NAP mode)
   if (buffer.length > maxSimpleUploadSize) {
-    console.log(`[gdrive] File size ${buffer.length} exceeds ${maxSimpleUploadSize} bytes, using resumable upload`)
+    logDebug('gdrive', ` File size ${buffer.length} exceeds ${maxSimpleUploadSize} bytes, using resumable upload`)
     return uploadFileResumable(folderId, filename, buffer, mimeType, config)
   }
 
@@ -383,7 +391,7 @@ export async function uploadFile(
       Buffer.from(closeDelimiter)
     ])
 
-    console.log(`[gdrive] Local dev upload: file="${filename}" to parent="${folderId}" (${buffer.length} bytes)`)
+    logDebug('gdrive', ` Local dev upload: file="${filename}" to parent="${folderId}" (${buffer.length} bytes)`)
     const response = await fetch(
       `${UPLOAD_API_BASE}/files?uploadType=multipart`,
       {
@@ -396,47 +404,46 @@ export async function uploadFile(
       }
     )
 
-    console.log(`[gdrive] Upload response: status=${response.status}`)
+    logDebug('gdrive', ` Upload response: status=${response.status}`)
     if (!response.ok) {
       const error = await response.text()
-      console.log(`[gdrive] Upload error: ${error}`)
+      logDebug('gdrive', ` Upload error: ${error}`)
       handleApiError(response.status, error)
     }
 
     const result = await response.json() as { id: string }
-    console.log(`[gdrive] Upload success: fileId=${result.id}`)
+    logDebug('gdrive', ` Upload success: fileId=${result.id}`)
     return result.id
   }
 
   // NAP mode: workspace-proxy expects 'parent' as separate form field (not in metadata JSON)
-  console.log(`[gdrive] NAP upload: file="${filename}" to parent="${folderId}"`)
+  logDebug('gdrive', ` NAP upload: file="${filename}" to parent="${folderId}"`)
   const formData = new FormData()
   formData.append('parent', folderId)
   const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer
   formData.append('file', new Blob([arrayBuffer], { type: mimeType }), filename)
 
-  const response = await fetch(
+  const response = await undiciFetch(
     `${WORKSPACE_PROXY_URL}/drive/files`,
     {
       method: 'POST',
       headers: {
         'X-Nexar-Platform-JWT': config.jwt || ''
       },
-      body: formData,
-      // @ts-expect-error - dispatcher is valid for undici but not in RequestInit types
-      dispatcher: insecureAgent
+      body: formData as unknown as import('undici').FormData,
+      dispatcher: internalAgent
     }
   )
 
   const responseText = await response.text()
-  console.log(`[gdrive] NAP upload response: status=${response.status}, body=${responseText.substring(0, 500)}`)
+  logDebug('gdrive', ` NAP upload response: status=${response.status}, body=${responseText.substring(0, 500)}`)
 
   if (!response.ok) {
     handleApiError(response.status, responseText)
   }
 
   const result = JSON.parse(responseText) as { id: string, webViewLink?: string }
-  console.log(`[gdrive] NAP upload success: fileId=${result.id}, webViewLink=${result.webViewLink}`)
+  logDebug('gdrive', ` NAP upload success: fileId=${result.id}, webViewLink=${result.webViewLink}`)
   return result.id
 }
 
@@ -509,8 +516,8 @@ async function uploadFileResumable(
 
   // NAP mode: workspace-proxy resumable upload
   // Step 1: Initiate resumable upload session
-  console.log(`[gdrive] NAP resumable upload: initiating for "${filename}" (${buffer.length} bytes)`)
-  const initResponse = await fetch(
+  logDebug('gdrive', ` NAP resumable upload: initiating for "${filename}" (${buffer.length} bytes)`)
+  const initResponse = await undiciFetch(
     `${WORKSPACE_PROXY_URL}/drive/files/resumable`,
     {
       method: 'POST',
@@ -524,13 +531,12 @@ async function uploadFileResumable(
         parentId: folderId,
         size: buffer.length
       }),
-      // @ts-expect-error - dispatcher is valid for undici but not in RequestInit types
-      dispatcher: insecureAgent
+      dispatcher: internalAgent
     }
   )
 
   const initResponseText = await initResponse.text()
-  console.log(`[gdrive] NAP resumable init response: status=${initResponse.status}, body=${initResponseText.substring(0, 500)}`)
+  logDebug('gdrive', ` NAP resumable init response: status=${initResponse.status}, body=${initResponseText.substring(0, 500)}`)
 
   if (!initResponse.ok) {
     // If resumable endpoint doesn't exist (404), throw clear error
@@ -559,7 +565,7 @@ async function uploadFileResumable(
     )
   }
 
-  console.log(`[gdrive] NAP resumable upload: got upload URL, uploading ${buffer.length} bytes directly to Google`)
+  logDebug('gdrive', ` NAP resumable upload: got upload URL, uploading ${buffer.length} bytes directly to Google`)
 
   // Step 2: Upload directly to Google (bypasses platform load balancer)
   const napArrayBuffer = new ArrayBuffer(buffer.length)
@@ -578,12 +584,12 @@ async function uploadFileResumable(
 
   if (!uploadResponse.ok) {
     const error = await uploadResponse.text()
-    console.log(`[gdrive] NAP resumable upload failed: status=${uploadResponse.status}, error=${error.substring(0, 500)}`)
+    logDebug('gdrive', ` NAP resumable upload failed: status=${uploadResponse.status}, error=${error.substring(0, 500)}`)
     handleApiError(uploadResponse.status, error)
   }
 
   const result = await uploadResponse.json() as { id: string }
-  console.log(`[gdrive] NAP resumable upload success: fileId=${result.id}`)
+  logDebug('gdrive', ` NAP resumable upload success: fileId=${result.id}`)
   return result.id
 }
 
@@ -638,9 +644,9 @@ export async function createFolder(
 
   // NAP mode: Try folder creation via workspace-proxy
   // Use the /drive/folders endpoint if available, otherwise try /drive/files with mimeType
-  console.log(`[gdrive] NAP: Attempting to create folder "${name}" in parent ${parentId}`)
+  logDebug('gdrive', ` NAP: Attempting to create folder "${name}" in parent ${parentId}`)
 
-  const response = await fetch(
+  const response = await undiciFetch(
     `${WORKSPACE_PROXY_URL}/drive/folders`,
     {
       method: 'POST',
@@ -652,13 +658,12 @@ export async function createFolder(
         name,
         parentId
       }),
-      // @ts-expect-error - dispatcher is valid for undici but not in RequestInit types
-      dispatcher: insecureAgent
+      dispatcher: internalAgent
     }
   )
 
   const responseText = await response.text()
-  console.log(`[gdrive] NAP folder creation response: status=${response.status}, body=${responseText.substring(0, 500)}`)
+  logDebug('gdrive', ` NAP folder creation response: status=${response.status}, body=${responseText.substring(0, 500)}`)
 
   if (!response.ok) {
     if (response.status === 404) {

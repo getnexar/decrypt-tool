@@ -1,11 +1,11 @@
 {
   "name": "decrypt-tool",
-  "version": "0.5.4",
+  "version": "0.6.2",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start -p ${PORT:-3000}",
+    "start": "NODE_TLS_REJECT_UNAUTHORIZED=0 next start -p ${PORT:-3000}",
     "lint": "eslint",
     "test": "vitest",
     "test:ui": "vitest --ui",

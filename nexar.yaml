@@ -15,4 +15,11 @@ resources:
   request_timeout: 300  # 5 minutes (default is 60s)
 sidecar:
   max_body_size: "100m"
+env:
+  # Required for workspace-proxy which uses internal self-signed certificates
+  ALLOW_INSECURE_TLS: "true"
+  # Disable TLS cert verification at the Node.js process level (before any code loads).
+  # This is the only reliable way - undici dispatcher and code-level process.env don't
+  # work with Next.js 16 Turbopack which runs routes in isolated worker contexts.
+  NODE_TLS_REJECT_UNAUTHORIZED: "0"
 cost_center: "RD-ENG-GEN-0"

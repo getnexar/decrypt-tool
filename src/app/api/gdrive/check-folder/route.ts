@@ -1,10 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { Agent, fetch as undiciFetch } from 'undici'
 import { parseGDriveUrl } from '@/lib/validation'
 
 // API endpoints
 const DRIVE_API_BASE = 'https://www.googleapis.com/drive/v3'
 const WORKSPACE_PROXY_URL = process.env.WORKSPACE_PROXY_URL || 'https://workspace-proxy.internal'
 const isLocalDev = !!process.env.GDRIVE_ACCESS_TOKEN
+
+// TLS certificate validation - must match gdrive.ts configuration
+const isInternalProxy = !!process.env.WORKSPACE_PROXY_URL?.includes('.internal')
+const internalAgent = new Agent({
+  connect: { rejectUnauthorized: !isInternalProxy }
+})
 
 /**
  * Check if a "decrypted" folder exists in the given folder
@@ -48,16 +55,12 @@ export async function GET(request: NextRequest) {
         }
       })
     } else {
-      const { Agent } = await import('undici')
-      const insecureAgent = new Agent({ connect: { rejectUnauthorized: false } })
-
-      response = await fetch(`${WORKSPACE_PROXY_URL}/drive/files?${params}`, {
+      response = await undiciFetch(`${WORKSPACE_PROXY_URL}/drive/files?${params}`, {
         headers: {
           'X-Nexar-Platform-JWT': jwt
         },
-        // @ts-expect-error - dispatcher is valid for undici
-        dispatcher: insecureAgent
-      })
+        dispatcher: internalAgent
+      }) as unknown as Response
     }
 
     if (!response.ok) {
